@@ -419,7 +419,7 @@ class Ctx:
     def __init__(self, *, message: str = "", user_id: str = "", username: str = "",
                  group_id: str = "", guild_id: str = "", channel_id: str = "",
                  message_id: str = "", appid: str = "", robot_name: str = "",
-                 avatar: str = "", ats: Optional[List[str]] = None,
+                 avatar: str = "", role: str = "", ats: Optional[List[str]] = None,
                  images: Optional[List[str]] = None, raw_json: str = "",
                  send: Optional[Callable] = None):
         self.message = message
@@ -432,6 +432,7 @@ class Ctx:
         self.appid = appid
         self.robot_name = robot_name
         self.avatar = avatar
+        self.role = role
         self.ats = ats or []
         self.images = images or []
         self.raw_json = raw_json
@@ -535,7 +536,7 @@ class CKEngine:
         sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
                   group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
                   message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, ats=ctx.ats, images=ctx.images,
+                  avatar=ctx.avatar, role=ctx.role, ats=ctx.ats, images=ctx.images,
                   raw_json=ctx.raw_json, send=ctx.send)
         sub.match = m
         try:
@@ -708,19 +709,18 @@ class CKEngine:
             return ctx.robot_name
         if name in ("Msgbar", "newMsgID", "消息ID"):
             return ctx.message_id
+        if name in ("身份", "MemberRole", "member_role"):
+            return ctx.role
         if name == "JSON":
             return ctx.raw_json
         if name in ("Time", "NDTime"):
             return str(int(time.time() * 1000))
         if name.startswith("时间"):
             return self._format_time(name[2:])
-        m = re.fullmatch(r"随机数(\-?\w+)-(\-?\w+)", name)
+        m = re.fullmatch(r"随机数(-?\d+)-(-?\d+)", name)
         if m:
-            try:
-                lo, hi = int(m.group(1)), int(m.group(2))
-                return str(random.randint(min(lo, hi), max(lo, hi)))
-            except ValueError:
-                return None
+            lo, hi = int(m.group(1)), int(m.group(2))
+            return str(random.randint(min(lo, hi), max(lo, hi)))
         m = re.fullmatch(r"随机数([a-zA-Z])-([a-zA-Z])", name)
         if m:
             lo, hi = ord(m.group(1)), ord(m.group(2))
@@ -1061,7 +1061,7 @@ class CKEngine:
         sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
                   group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
                   message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, ats=ctx.ats, images=ctx.images,
+                  avatar=ctx.avatar, role=ctx.role, ats=ctx.ats, images=ctx.images,
                   raw_json=ctx.raw_json, send=ctx.send)
         try:
             await self.run_command(command, sub, depth)

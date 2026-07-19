@@ -176,12 +176,14 @@ $数据库 声明 示例 测试.db$</span>
     <div class="tab-body help" id="tab-4">
       <p style="color:#747d8c">点击右上角「复制」可直接复制配置例子到剪贴板，粘贴进词库即可使用。</p>
       <h4>发送者 / 会话变量</h4>
-      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID；<code>%昵称%</code>/<code>%UserName%</code> 发送者昵称；<code>%群ID%</code>/<code>%群号%</code> 群ID；<code>%频道号%</code>/<code>%GuildId%</code> 频道ID；<code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID；<code>%robot%</code> 机器人AppID；<code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID。</p>
+      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID；<code>%昵称%</code>/<code>%UserName%</code> 发送者昵称；<code>%头像%</code>/<code>%UserAvatar%</code> 发送者头像URL；<code>%身份%</code>/<code>%MemberRole%</code> 群内身份（owner=群主/admin=管理/member=成员）；<code>%群ID%</code>/<code>%群号%</code> 群ID；<code>%频道号%</code>/<code>%GuildId%</code> 频道ID；<code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID；<code>%robot%</code> 机器人AppID；<code>%robotName%</code>/<code>%机器人昵称%</code> 机器人昵称；<code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID。</p>
       <div class="copy-block">我的信息
 你好 %昵称%！
 你的ID：%ID%
+你的身份：%身份%
+头像：%头像%
 群ID：%群ID%
-机器人AppID：%robot%
+机器人：%机器人昵称%（%robot%）
 消息ID：%消息ID%</div>
       <h4>时间变量</h4>
       <p><code>%时间…%</code> 支持 yyyy MM dd HH hh mm ss E 格式化；<code>%Time%</code>/<code>%NDTime%</code> 毫秒时间戳。</p>

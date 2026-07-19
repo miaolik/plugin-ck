@@ -37,6 +37,9 @@ $写 签到 %ID% %时间MMdd%$
 | --- | --- |
 | `%ID%` `%UserId%` | 发送者 ID |
 | `%昵称%` `%UserName%` | 发送者昵称 |
+| `%头像%` `%UserAvatar%` | 发送者头像 URL |
+| `%身份%` `%MemberRole%` | 群内身份（owner=群主 / admin=管理 / member=普通成员） |
+| `%robotName%` `%机器人昵称%` | 机器人昵称 |
 | `%群ID%` `%群号%` | 群 ID |
 | `%频道号%` `%GuildId%` | 频道 ID（群场景回退为群 ID） |
 | `%子频道号%` `%ChannelId%` | 子频道 ID |
