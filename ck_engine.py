@@ -732,6 +732,8 @@ class CKEngine:
             return ctx.raw_json
         if name in ("Time", "NDTime"):
             return str(int(time.time() * 1000))
+        if name in ctx.extras:
+            return ctx.extras[name]
         if name.startswith("时间"):
             return self._format_time(name[2:])
         m = re.fullmatch(r"随机数(-?\d+)-(-?\d+)", name)
