@@ -71,7 +71,10 @@ def _event_get(event, path: str) -> str:
 
 
 def _avatar_url(event) -> str:
-    """QQ 开放平台头像：https://q.qlogo.cn/qqapp/{appid}/{openid}/640"""
+    """头像：频道消息数据自带 author.avatar；群/私聊用 https://q.qlogo.cn/qqapp/{appid}/{openid}/640"""
+    avatar = _event_get(event, "d/author/avatar")
+    if avatar:
+        return avatar
     uid = event.user_id or ""
     if event.appid and uid:
         return f"https://q.qlogo.cn/qqapp/{event.appid}/{uid}/640"
