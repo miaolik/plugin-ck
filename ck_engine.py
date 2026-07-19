@@ -26,10 +26,11 @@ DICT_DIR = BASE_DIR / "dicts"
 DATA_DIR = BASE_DIR / "data"
 DB_DIR = DATA_DIR / "db"
 GLOBAL_FILE = DATA_DIR / "全局变量.json"
+SETTINGS_FILE = DATA_DIR / "设置.json"
 
 MAX_LOOP = 1000
 MAX_CALL_DEPTH = 10
-HTTP_TIMEOUT = 15
+DEFAULT_HTTP_TIMEOUT = 300
 HTTP_MAX_BYTES = 200 * 1024
 
 COMMENT_PREFIXES = ("//", "##", "&&")
@@ -168,6 +169,31 @@ def store_delete(path: str) -> bool:
         f.unlink()
         return True
     return False
+
+
+def settings_load() -> Dict[str, object]:
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def settings_save(data: Dict[str, object]) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def http_timeout() -> int:
+    """URL 访问/下载超时秒数，可在 Web 端「设置」中自定义，默认 300 秒（5 分钟）。"""
+    try:
+        value = int(settings_load().get("http_timeout", DEFAULT_HTTP_TIMEOUT))
+    except (TypeError, ValueError):
+        return DEFAULT_HTTP_TIMEOUT
+    return value if value > 0 else DEFAULT_HTTP_TIMEOUT
 
 
 def globals_load() -> Dict[str, str]:
@@ -986,7 +1012,7 @@ class CKEngine:
         if not url.startswith(("http://", "https://")):
             raise CKError(f"$访问$ URL 无效: {url}")
         try:
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:
                     body = await resp.content.read(HTTP_MAX_BYTES)
@@ -1007,7 +1033,7 @@ class CKEngine:
         elif data:
             kwargs["data"] = dict(urllib.parse.parse_qsl(data)) or data
         try:
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, **kwargs) as resp:
                     body = await resp.content.read(HTTP_MAX_BYTES)
@@ -1021,7 +1047,7 @@ class CKEngine:
         target = _safe_rel_path(DATA_DIR, local_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            timeout = aiohttp.ClientTimeout(total=60)
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:
                     content = await resp.content.read(20 * 1024 * 1024)
