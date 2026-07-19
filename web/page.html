@@ -185,12 +185,24 @@ $数据库 声明 示例 测试.db$</span>
 群ID：%群ID%
 机器人：%机器人昵称%（%robot%）
 消息ID：%消息ID%</div>
+      <div class="copy-block">会话信息
+场景：%场景%
+会话ID：%会话ID%
+机器人QQ：%机器人QQ%
+机器人身份：%机器人身份%
+是否艾特机器人：%是否艾特机器人%
+AT数量：%AT数量%　图片数量：%图片数量%
+事件类型：%事件类型%
+消息时间：%消息时间%
+引用ID：%引用ID%</div>
       <h4>时间变量</h4>
       <p><code>%时间…%</code> 支持 yyyy MM dd HH hh mm ss E 格式化；<code>%Time%</code>/<code>%NDTime%</code>/<code>%毫秒戳%</code> 当前毫秒时间戳；<code>%秒戳%</code> 当前秒级时间戳；<code>%时间戳%</code>/<code>%消息时间%</code> 消息的平台时间戳。</p>
       <div class="copy-block">现在时间
 现在是：%时间yyyy年MM月dd日 HH:mm:ss%
 今天是星期%时间E%
-时间戳：%Time%</div>
+毫秒戳：%Time%
+秒戳：%秒戳%
+消息时间戳：%时间戳%</div>
       <h4>随机变量</h4>
       <p><code>%随机数a-b%</code> 随机整数；<code>%随机数a-z%</code> 随机小写字母。</p>
       <div class="copy-block">抽奖
@@ -211,6 +223,16 @@ $数据库 声明 示例 测试.db$</span>
       <div class="copy-block">识图
 图片地址：%IMG0%
 ±img=%IMG0%±</div>
+      <h4>引用 / 按钮 / 撤回</h4>
+      <p><code>±引用±</code> 本条回复引用触发者的消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调，回调按钮点击后其 data 会作为触发词再次触发词库）；<code>$撤回$</code>/<code>$撤回 消息ID$</code> 撤回消息。</p>
+      <div class="copy-block">引用测试
+±引用±收到你的消息啦</div>
+      <div class="copy-block">菜单
+请选择功能：
+±btn=签到;签到|抽奖;抽奖^官网;https://example.com|帮助;/帮助±</div>
+      <div class="copy-block">撤回测试
+$撤回$
+已撤回你刚才的消息</div>
       <h4>局部变量</h4>
       <p>格式 <code>变:值</code>（变量名一个字符，第二个字符是冒号，仅当前语句块有效），使用 <code>%变%</code>。</p>
       <div class="copy-block">算钱
@@ -225,6 +247,16 @@ $全局写 公告 %括号1%$
 
 看公告
 当前公告：%全局.公告%</div>
+      <h4>多媒体 / Markdown / ARK</h4>
+      <p><code>±img=URL或本地路径±</code> 图片；<code>±voice=URL±</code> 语音；<code>±video=URL±</code> 视频；<code>±file=URL或本地路径±</code> 文件；<code>±md±</code> 本条按 Markdown 发送；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片。</p>
+      <div class="copy-block">发图
+±img=https://q.qlogo.cn/qqapp/%robot%/%ID%/640±</div>
+      <div class="copy-block">md测试
+±md±**加粗** *斜体*
+> 引用行
+[链接](https://example.com)</div>
+      <div class="copy-block">ark测试
+±ark=37|提示文字|大标题|副标题|https://q.qlogo.cn/qqapp/%robot%/%ID%/640|±</div>
       <h4>综合例子：签到（可直接复制使用）</h4>
       <div class="copy-block">签到
 如果:$读 签到 %ID% 0$==%时间MMdd%
