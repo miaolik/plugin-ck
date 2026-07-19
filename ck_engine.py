@@ -753,7 +753,7 @@ class CKEngine:
 
     @staticmethod
     def _format_time(fmt: str) -> str:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))  # 北京时间 UTC+8
         weekdays = "一二三四五六日"
         out = fmt
         out = out.replace("yyyy", now.strftime("%Y"))
