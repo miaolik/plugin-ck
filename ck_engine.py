@@ -730,8 +730,10 @@ class CKEngine:
             return str(len(ctx.images))
         if name == "JSON":
             return ctx.raw_json
-        if name in ("Time", "NDTime"):
+        if name in ("Time", "NDTime", "毫秒戳"):
             return str(int(time.time() * 1000))
+        if name == "秒戳":
+            return str(int(time.time()))
         if name in ctx.extras:
             return ctx.extras[name]
         if name.startswith("时间"):
