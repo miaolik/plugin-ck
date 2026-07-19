@@ -41,6 +41,14 @@ class ReturnSignal(Exception):
     """`返回` 语句：提前结束当前指令。"""
 
 
+class BreakSignal(Exception):
+    """`跳出` 语句：结束当前循环。"""
+
+
+class ContinueSignal(Exception):
+    """`继续` 语句：跳到当前循环下一轮。"""
+
+
 class CKError(Exception):
     """词库运行错误（附带给用户看的消息）。"""
 
@@ -161,6 +169,19 @@ def store_write(path: str, key: str, value: str) -> None:
     if not found:
         lines.append(f"{key} = {value}")
     f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def store_keys(path: str) -> List[str]:
+    """返回配置文件内所有键（按文件顺序）。"""
+    f = _safe_rel_path(DATA_DIR, path)
+    if not f.exists() or f.is_dir():
+        return []
+    keys = []
+    for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+        k, sep, _ = line.partition("=")
+        if sep and k.strip():
+            keys.append(k.strip())
+    return keys
 
 
 def store_delete(path: str) -> bool:
@@ -500,7 +521,7 @@ class CKEngine:
         ctx = Ctx(message="#INITROBOT#")
         try:
             await self._run_lines(self.init_lines, ctx, 0)
-        except ReturnSignal:
+        except (ReturnSignal, BreakSignal, ContinueSignal):
             pass
         except CKError as exc:
             self.parse_errors.append(f"初始化失败: {exc}")
@@ -524,7 +545,7 @@ class CKEngine:
         ctx.match = m
         try:
             await self._run_lines(blk.lines, ctx, 0)
-        except ReturnSignal:
+        except (ReturnSignal, BreakSignal, ContinueSignal):
             pass
         except CKError as exc:
             ctx.errors.append(str(exc))
@@ -550,7 +571,7 @@ class CKEngine:
         sub.match = m
         try:
             await self._run_lines(blk.lines, sub, depth + 1)
-        except ReturnSignal:
+        except (ReturnSignal, BreakSignal, ContinueSignal):
             pass
         ctx.errors.extend(sub.errors)
         # 合并输出（回调语义）
@@ -575,6 +596,10 @@ class CKEngine:
 
             if raw == "返回":
                 raise ReturnSignal()
+            if raw == "跳出":
+                raise BreakSignal()
+            if raw == "继续":
+                raise ContinueSignal()
 
             if raw.startswith("如果:") or raw.startswith("如果："):
                 cond_src = raw[3:]
@@ -593,6 +618,9 @@ class CKEngine:
                 i = await self._run_switch(lines, i, value, ctx, depth)
                 continue
 
+            if raw.startswith("循环遍历:") or raw.startswith("循环遍历："):
+                i = await self._run_foreach(lines, i, ctx, depth)
+                continue
             if raw.startswith("循环:") or raw.startswith("循环："):
                 i = await self._run_loop(lines, i, ctx, depth)
                 continue
@@ -656,7 +684,7 @@ class CKEngine:
         return end + 1
 
     async def _run_loop(self, lines: List[str], start: int, ctx: Ctx, depth: int) -> int:
-        end = self._skip_to(lines, start, "循环:", "结束")
+        end = self._skip_to(lines, start, "循环", "结束")
         cond_src = lines[start][3:]
         body = lines[start + 1:end]
         count = 0
@@ -667,7 +695,52 @@ class CKEngine:
             count += 1
             if count > MAX_LOOP:
                 raise CKError(f"循环超过 {MAX_LOOP} 次，已强制结束")
-            await self._run_lines(body, ctx, depth)
+            try:
+                await self._run_lines(body, ctx, depth)
+            except BreakSignal:
+                break
+            except ContinueSignal:
+                continue
+        return end + 1
+
+    async def _run_foreach(self, lines: List[str], start: int, ctx: Ctx, depth: int) -> int:
+        """循环遍历:数据 项变量 [序变量] —— 遍历 JSON 数组/对象或逗号分隔文本。"""
+        end = self._skip_to(lines, start, "循环遍历", "结束")
+        head = lines[start][5:]
+        body = lines[start + 1:end]
+        parts = head.rsplit(" ", 2)
+        if len(parts) >= 2 and len(parts[-1]) == 1 and len(parts[-2]) == 1:
+            data_src, item_var, idx_var = " ".join(parts[:-2]), parts[-2], parts[-1]
+        elif len(parts) >= 2 and len(parts[-1]) == 1:
+            data_src, item_var, idx_var = " ".join(parts[:-1]), parts[-1], ""
+        else:
+            raise CKError("循环遍历 格式：循环遍历:数据 项变量 [序变量]（变量名均为单字符）")
+        data_text = (await self._expand(data_src, ctx, depth)).strip()
+        items: List[Tuple[str, str]] = []
+        try:
+            parsed = json.loads(data_text)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, list):
+            items = [(str(idx), it if isinstance(it, str) else json.dumps(it, ensure_ascii=False))
+                     for idx, it in enumerate(parsed)]
+        elif isinstance(parsed, dict):
+            items = [(str(k), v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+                     for k, v in parsed.items()]
+        elif data_text:
+            items = [(str(idx), piece) for idx, piece in enumerate(data_text.split(","))]
+        if len(items) > MAX_LOOP:
+            raise CKError(f"循环遍历超过 {MAX_LOOP} 项，已强制结束")
+        for idx, item in items:
+            ctx.vars[item_var] = item
+            if idx_var:
+                ctx.vars[idx_var] = idx
+            try:
+                await self._run_lines(body, ctx, depth)
+            except BreakSignal:
+                break
+            except ContinueSignal:
+                continue
         return end + 1
 
     # ---- 文本展开：%变量% → $函数$ → @数组取值 ----
@@ -736,6 +809,8 @@ class CKEngine:
             return str(int(time.time()))
         if name in ctx.extras:
             return ctx.extras[name]
+        if name in ("时间戳", "消息时间"):
+            return ""
         if name.startswith("时间"):
             return self._format_time(name[2:])
         m = re.fullmatch(r"随机数(-?\d+)-(-?\d+)", name)
@@ -835,6 +910,17 @@ class CKEngine:
         if name == "删除":
             store_delete(rest.strip())
             return ""
+        if name == "读键列表":
+            return json.dumps(store_keys(rest.strip()), ensure_ascii=False)
+        if name == "数组长":
+            data_text = rest.strip()
+            try:
+                parsed = json.loads(data_text)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, (list, dict)):
+                return str(len(parsed))
+            return str(len(data_text.split(","))) if data_text else "0"
         if name == "全局读":
             args = rest.split(" ", 1)
             key = args[0]

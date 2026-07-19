@@ -114,7 +114,7 @@ $写 签到 %ID% %时间MMdd%$"></textarea>
       <p>局部变量：<code>变:123</code>（单字符名，仅当前语句块有效），使用 <code>%变%</code>。</p>
       <p>全局变量：<code>$全局写 名字 值$</code> / <code>$全局读 名字 默认值$</code> / <code>$全局删 名字$</code>，或 <code>%全局.名字%</code>，持久保存、跨指令可用。<code>$撤回$</code>/<code>$撤回 消息ID$</code> 撤回消息。</p>
       <h4>读写数据</h4>
-      <span class="snip">$读 金币 %ID% 0$</span><span class="snip">$写 金币 %ID% 100$</span><span class="snip">$删除 路径$</span>
+      <span class="snip">$读 金币 %ID% 0$</span><span class="snip">$写 金币 %ID% 100$</span><span class="snip">$删除 路径$</span><span class="snip">$读键列表 路径$</span>
       <p>数据保存在插件 data/ 目录下，文件内容为「键 = 值」。推荐路径：<code>%群ID%/金币 %ID%</code>。</p>
       <h4>如果 / 分支 / 循环 / 返回</h4>
       <span class="snip">如果:%A%==1
@@ -129,8 +129,14 @@ default:
 %i%\n
 i:[%i%+1]
 结束</span>
+      <span class="snip">循环遍历:%J% x n
+第%n%个：%x%\n
+结束</span>
+      <span class="snip">跳出</span>
+      <span class="snip">继续</span>
       <span class="snip">返回</span>
       <p>条件支持 <code>==</code> <code>!=</code> <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code>；<code>[算式]</code> 支持 + - * / % 和括号。</p>
+      <p><code>循环遍历:数据 项变量 序变量</code>（单字符变量名，序变量可省）遍历 JSON 数组/对象（序=键）/逗号文本；循环内 <code>跳出</code>=break、<code>继续</code>=continue。</p>
       <h4>发送消息</h4>
       <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
       <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调）；<code>\n</code> 或 <code>\r</code> 为换行。</p>
@@ -139,7 +145,7 @@ i:[%i%+1]
       <h4>随机</h4>
       <span class="snip">$随机数 1 100$</span><span class="snip">$随机字母 5 2$</span><span class="snip">$随机汉字 5 0$</span><span class="snip">$随机英文数字 5$</span>
       <h4>数组 / JSON</h4>
-      <span class="snip">@[1,2,钝角] [2]</span><span class="snip">@{"a":1} [a]</span><span class="snip">$数组处理 add @ [1,2]@3$</span>
+      <span class="snip">@[1,2,钝角] [2]</span><span class="snip">@{"a":1} [a]</span><span class="snip">$数组处理 add @ [1,2]@3$</span><span class="snip">$数组长 [1,2,3]$</span>
       <p>取值：<code>@数组 [序号]</code>、<code>@JSON [键]</code>、嵌套 <code>@%查% [data[0].表头1]</code>。</p>
       <h4>排行榜 (JSON)</h4>
       <span class="snip">$排行榜写 排行榜.json 金币 %ID% 50$</span><span class="snip">$排行榜读 排行榜.json 金币 参数 0$</span><span class="snip">$排行榜读 排行榜.json 金币 值 0$</span>
@@ -257,6 +263,31 @@ $全局写 公告 %括号1%$
 [链接](https://example.com)</div>
       <div class="copy-block">ark测试
 ±ark=37|提示文字|大标题|副标题|https://q.qlogo.cn/qqapp/%robot%/%ID%/640|±</div>
+      <h4>循环 / 循环遍历</h4>
+      <p><code>循环:条件</code>…<code>结束</code> 条件循环；<code>循环遍历:数据 项变量 序变量</code>…<code>结束</code> 遍历 JSON 数组/对象（序变量=键）/逗号分隔文本（单字符变量名，序变量可省略）；循环内 <code>跳出</code>=break、<code>继续</code>=continue。<code>$读键列表 路径$</code> 返回配置文件全部键名（JSON 数组），<code>$数组长 数据$</code> 返回长度。</p>
+      <div class="copy-block">报数
+i:0
+循环:%i%<5
+i:[%i%+1]
+第%i%次\n
+结束</div>
+      <div class="copy-block">水果列表
+J:["苹果","香蕉","梨"]
+共$数组长 %J%$个：\n
+循环遍历:%J% x n
+%n%. %x%\n
+结束</div>
+      <div class="copy-block">查配置
+K:$读键列表 我的配置$
+循环遍历:%K% k
+%k% = $读 我的配置 %k% 无$\n
+结束</div>
+      <div class="copy-block">查仓库
+R:$访问 https://api.github.com/repos/ElainaCore/ElainaBot_v2$
+仓库：@%R% [full_name]\n
+星标：@%R% [stargazers_count]</div>
+      <h4>内置示例词库</h4>
+      <p>插件自带 <code>dicts/变量示例.txt</code>：对机器人直接发 <b>示例菜单</b>，即可逐项体验全部变量与功能，也是词库开发的实践模板。</p>
       <h4>综合例子：签到（可直接复制使用）</h4>
       <div class="copy-block">签到
 如果:$读 签到 %ID% 0$==%时间MMdd%
