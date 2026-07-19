@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>词库编辑器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f6fa; color: #2f3542; font-size: 14px; }
+  .layout { display: flex; height: 100vh; }
+  .sidebar { width: 220px; background: #fff; border-right: 1px solid #e4e7ee; display: flex; flex-direction: column; }
+  .sidebar h2 { font-size: 15px; padding: 14px 14px 8px; }
+  .dict-list { flex: 1; overflow-y: auto; }
+  .dict-item { padding: 9px 14px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border-left: 3px solid transparent; }
+  .dict-item:hover { background: #f1f3f9; }
+  .dict-item.active { background: #eef2ff; border-left-color: #5352ed; font-weight: 600; }
+  .dict-item small { color: #a4b0be; }
+  .sidebar-btns { padding: 10px; display: flex; gap: 6px; flex-wrap: wrap; border-top: 1px solid #e4e7ee; }
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; background: #fff; border-bottom: 1px solid #e4e7ee; flex-wrap: wrap; }
+  .toolbar .title { font-weight: 700; margin-right: auto; }
+  button { border: 1px solid #d5d9e2; background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #f1f3f9; }
+  button.primary { background: #5352ed; color: #fff; border-color: #5352ed; }
+  button.primary:hover { background: #3f3ed9; }
+  button.danger { color: #e74c3c; border-color: #f2c1bb; }
+  .editor-wrap { flex: 1; display: flex; overflow: hidden; }
+  #editor { flex: 1; border: none; outline: none; resize: none; padding: 14px; font-family: "JetBrains Mono", Consolas, monospace; font-size: 13px; line-height: 1.7; background: #1e2233; color: #d7dce8; tab-size: 4; }
+  .rightbar { width: 380px; background: #fff; border-left: 1px solid #e4e7ee; display: flex; flex-direction: column; overflow: hidden; }
+  .tabs { display: flex; border-bottom: 1px solid #e4e7ee; }
+  .tabs div { flex: 1; text-align: center; padding: 10px 4px; cursor: pointer; font-size: 13px; color: #747d8c; }
+  .tabs div.active { color: #5352ed; font-weight: 700; border-bottom: 2px solid #5352ed; }
+  .tab-body { flex: 1; overflow-y: auto; padding: 12px; display: none; }
+  .tab-body.active { display: block; }
+  input[type=text], textarea.small { width: 100%; border: 1px solid #d5d9e2; border-radius: 6px; padding: 7px 9px; font-size: 13px; margin-bottom: 8px; }
+  .test-out { background: #f8f9fd; border: 1px solid #e4e7ee; border-radius: 6px; padding: 10px; white-space: pre-wrap; font-size: 13px; min-height: 60px; margin-top: 6px; }
+  .seg { margin: 4px 0; padding: 6px 8px; border-radius: 6px; background: #fff; border: 1px solid #e4e7ee; }
+  .seg .k { display: inline-block; font-size: 11px; background: #5352ed; color: #fff; border-radius: 4px; padding: 1px 6px; margin-right: 6px; }
+  .snip { display: inline-block; background: #eef2ff; border: 1px solid #d9defc; border-radius: 5px; padding: 3px 8px; margin: 3px 3px 0 0; cursor: pointer; font-size: 12px; font-family: monospace; }
+  .snip:hover { background: #dde3ff; }
+  .help h4 { margin: 12px 0 4px; font-size: 13px; color: #5352ed; }
+  .help code { background: #f1f3f9; border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+  .help p { margin: 3px 0; line-height: 1.6; font-size: 12.5px; color: #57606f; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { border-bottom: 1px solid #eef0f5; padding: 6px 6px; text-align: left; word-break: break-all; }
+  #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: #2f3542; color: #fff; padding: 9px 18px; border-radius: 8px; display: none; z-index: 99; }
+  #toast.err { background: #e74c3c; }
+  .status-line { padding: 6px 14px; font-size: 12px; color: #747d8c; background: #fff; border-top: 1px solid #e4e7ee; }
+  .errbox { color: #e74c3c; font-size: 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="toast"></div>
+<div class="layout">
+  <div class="sidebar">
+    <h2>📚 词库文件</h2>
+    <div class="dict-list" id="dict-list"></div>
+    <div class="sidebar-btns">
+      <button class="primary" onclick="newDict()">新建</button>
+      <button onclick="renameDict()">重命名</button>
+      <button class="danger" onclick="deleteDict()">删除</button>
+      <button onclick="reloadEngine()">重载</button>
+    </div>
+  </div>
+  <div class="main">
+    <div class="toolbar">
+      <span class="title" id="cur-name">未选择词库</span>
+      <span id="blk-count" style="color:#a4b0be;font-size:12px"></span>
+      <button class="primary" onclick="saveDict()">💾 保存并重载 (Ctrl+S)</button>
+    </div>
+    <div class="editor-wrap">
+      <textarea id="editor" spellcheck="false" placeholder="选择或新建一个词库文件开始编写…
+
+词库结构示例：
+
+你好
+你好呀，%昵称%！
+
+签到
+如果:$读 签到 %ID% 0$==%时间MMdd%
+今日已签到
+返回
+如果尾
+签到成功！
+$写 签到 %ID% %时间MMdd%$"></textarea>
+    </div>
+    <div class="status-line" id="status-line"></div>
+  </div>
+  <div class="rightbar">
+    <div class="tabs">
+      <div class="active" onclick="tab(0,this)">测试</div>
+      <div onclick="tab(1,this)">语法</div>
+      <div onclick="tab(2,this)">全局变量</div>
+      <div onclick="tab(3,this)">数据</div>
+    </div>
+    <div class="tab-body active" id="tab-0">
+      <input type="text" id="test-msg" placeholder="模拟发送的消息，如：签到" onkeydown="if(event.key==='Enter')runTest()">
+      <input type="text" id="test-uid" placeholder="模拟用户ID（默认 TEST_USER）">
+      <input type="text" id="test-gid" placeholder="模拟群ID（默认 TEST_GROUP）">
+      <button class="primary" onclick="runTest()">▶ 运行测试</button>
+      <div class="test-out" id="test-out">测试结果显示在这里</div>
+    </div>
+    <div class="tab-body help" id="tab-1">
+      <h4>词库结构</h4>
+      <p>块与块之间空一行；块首行是<b>指令（正则触发词）</b>，其余行被触发后依次执行。多个指令同时命中时只执行最上面的。注释行以 <code>//</code>、<code>##</code>、<code>&amp;&amp;</code> 开头。</p>
+      <h4>常用片段（点击插入）</h4>
+      <span class="snip">%ID%</span><span class="snip">%昵称%</span><span class="snip">%群ID%</span><span class="snip">%频道号%</span><span class="snip">%子频道号%</span><span class="snip">%参数1%</span><span class="snip">%参数-1%</span><span class="snip">%括号1%</span><span class="snip">%AT0%</span><span class="snip">%IMG0%</span><span class="snip">%时间yyyy年MM月dd日 HH:mm:ss%</span><span class="snip">%时间MMdd%</span><span class="snip">%Time%</span><span class="snip">%随机数1-100%</span>
+      <h4>变量</h4>
+      <p>局部变量：<code>变:123</code>（单字符名，仅当前语句块有效），使用 <code>%变%</code>。</p>
+      <p>全局变量：<code>$全局写 名字 值$</code> / <code>$全局读 名字 默认值$</code>，或 <code>%全局.名字%</code>，持久保存、跨指令可用。</p>
+      <h4>读写数据</h4>
+      <span class="snip">$读 金币 %ID% 0$</span><span class="snip">$写 金币 %ID% 100$</span><span class="snip">$删除 路径$</span>
+      <p>数据保存在插件 data/ 目录下，文件内容为「键 = 值」。推荐路径：<code>%群ID%/金币 %ID%</code>。</p>
+      <h4>如果 / 分支 / 循环 / 返回</h4>
+      <span class="snip">如果:%A%==1
+如果尾</span>
+      <span class="snip">分支:%参数-1%
+情况:早安
+早
+default:
+嗯？
+分支尾</span>
+      <span class="snip">循环:i<=10
+%i%\n
+i:[%i%+1]
+结束</span>
+      <span class="snip">返回</span>
+      <p>条件支持 <code>==</code> <code>!=</code> <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code>；<code>[算式]</code> 支持 + - * / % 和括号。</p>
+      <h4>发送消息</h4>
+      <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
+      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>\n</code> 或 <code>\r</code> 为换行。</p>
+      <h4>文本处理</h4>
+      <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
+      <h4>随机</h4>
+      <span class="snip">$随机数 1 100$</span><span class="snip">$随机字母 5 2$</span><span class="snip">$随机汉字 5 0$</span><span class="snip">$随机英文数字 5$</span>
+      <h4>数组 / JSON</h4>
+      <span class="snip">@[1,2,钝角] [2]</span><span class="snip">@{"a":1} [a]</span><span class="snip">$数组处理 add @ [1,2]@3$</span>
+      <p>取值：<code>@数组 [序号]</code>、<code>@JSON [键]</code>、嵌套 <code>@%查% [data[0].表头1]</code>。</p>
+      <h4>排行榜 (JSON)</h4>
+      <span class="snip">$排行榜写 排行榜.json 金币 %ID% 50$</span><span class="snip">$排行榜读 排行榜.json 金币 参数 0$</span><span class="snip">$排行榜读 排行榜.json 金币 值 0$</span>
+      <p>写入后自动按值降序排列；「参数」读取第 N 名的 ID，「值」读取第 N 名的数值（N 从 0 开始）。</p>
+      <h4>数据库 (SQLite)</h4>
+      <span class="snip">$数据库 声明 名称 文件.db$</span><span class="snip">$数据库 执行SQL 名称 insert into 表 values ('a')$</span><span class="snip">$数据库 查询SQL 名称 select * from 表$</span>
+      <p>返回 JSON：<code>{"data":..., "errorMsg":"", "status":N}</code>，status 为 -1 表示失败。声明可写在 <code>#INITROBOT#</code> 初始化块中。</p>
+      <h4>访问 URL / 下载</h4>
+      <span class="snip">$访问 https://api.example.com/x$</span><span class="snip">$POST访问 https://api.example.com/x a=1&b=2$</span><span class="snip">$下载 本地路径.png https://example.com/x.png$</span><span class="snip">$URLEncoder 中文$</span><span class="snip">$URLDecoder %E4%B8%AD$</span>
+      <p><code>$POST访问$</code> 数据可为 <code>a=1&amp;b=2</code> 表单或 <code>{"a":1}</code> JSON。下载路径相对插件 data/ 目录。</p>
+      <h4>调用 / 回调 / 内部指令</h4>
+      <span class="snip">$调用 2000 指令名$</span><span class="snip">$回调 指令名$</span><span class="snip">[内部]指令名</span>
+      <p>调用：延迟 N 毫秒后触发指令并单独发送；回调：只能触发 <code>[内部]</code> 指令且输出合并到当前消息。</p>
+      <h4>初始化块</h4>
+      <span class="snip">#INITROBOT#
+$数据库 声明 示例 测试.db$</span>
+      <p>词库加载时执行一次，适合放数据库声明等。</p>
+    </div>
+    <div class="tab-body" id="tab-2">
+      <p style="margin-bottom:8px;color:#747d8c;font-size:12px">全局变量持久保存，词库中用 <code>%全局.名字%</code> 或 <code>$全局读/全局写$</code> 访问。</p>
+      <table id="glb-table"><thead><tr><th>名字</th><th>值</th><th></th></tr></thead><tbody></tbody></table>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <input type="text" id="glb-k" placeholder="名字" style="margin:0">
+        <input type="text" id="glb-v" placeholder="值" style="margin:0">
+        <button class="primary" onclick="addGlobal()">添加</button>
+      </div>
+      <button style="margin-top:8px" onclick="loadGlobals()">刷新</button>
+    </div>
+    <div class="tab-body" id="tab-3">
+      <button onclick="loadData()">刷新数据文件</button>
+      <table id="data-table" style="margin-top:8px"><thead><tr><th>路径</th><th>大小</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="test-out" id="data-view" style="display:none"></div>
+    </div>
+  </div>
+</div>
+<script>
+const TOKEN = new URLSearchParams(window.location.search).get('token') || '';
+let curDict = '';
+let dirty = false;
+
+async function api(path, body, method) {
+  const url = `/api/ext/ck/${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(TOKEN)}`;
+  const opts = { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  return res.json();
+}
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = ok ? '' : 'err'; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2500);
+}
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function tab(i, el) {
+  document.querySelectorAll('.tabs div').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.tab-body').forEach(d => d.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('tab-' + i).classList.add('active');
+  if (i === 2) loadGlobals();
+  if (i === 3) loadData();
+}
+
+async function loadDicts() {
+  const r = await api('dicts');
+  const list = document.getElementById('dict-list');
+  list.innerHTML = '';
+  (r.dicts || []).forEach(d => {
+    const div = document.createElement('div');
+    div.className = 'dict-item' + (d.name === curDict ? ' active' : '');
+    div.innerHTML = `<span>${esc(d.name)}</span><small>${d.lines}行</small>`;
+    div.onclick = () => openDict(d.name);
+    list.appendChild(div);
+  });
+  document.getElementById('blk-count').textContent = `共 ${r.blocks ?? 0} 个语句块`;
+  const errs = r.errors || [];
+  document.getElementById('status-line').innerHTML = errs.length
+    ? `<span class="errbox">⚠ ${errs.map(esc).join('　|　')}</span>` : '词库加载正常';
+}
+async function openDict(name) {
+  if (dirty && !confirm('当前词库有未保存修改，放弃并切换？')) return;
+  const r = await api('dict?name=' + encodeURIComponent(name));
+  if (!r.success) return toast(r.message, false);
+  curDict = name; dirty = false;
+  document.getElementById('editor').value = r.content;
+  document.getElementById('cur-name').textContent = name + '.txt';
+  loadDicts();
+}
+async function saveDict() {
+  if (!curDict) return toast('请先选择或新建词库', false);
+  const r = await api('dict/save', { name: curDict, content: document.getElementById('editor').value });
+  toast(r.message || (r.success ? '已保存' : '失败'), r.success);
+  if (r.success) { dirty = false; loadDicts(); }
+}
+async function newDict() {
+  const name = prompt('新词库名（不含 .txt）：');
+  if (!name) return;
+  const r = await api('dict/save', { name: name.trim(), content: '' });
+  if (!r.success) return toast(r.message, false);
+  curDict = name.trim(); dirty = false;
+  document.getElementById('editor').value = '';
+  document.getElementById('cur-name').textContent = curDict + '.txt';
+  loadDicts();
+}
+async function renameDict() {
+  if (!curDict) return toast('请先选择词库', false);
+  const name = prompt('新名称：', curDict);
+  if (!name || name === curDict) return;
+  const r = await api('dict/rename', { name: curDict, new_name: name.trim() });
+  toast(r.message || '完成', r.success);
+  if (r.success) { curDict = name.trim(); document.getElementById('cur-name').textContent = curDict + '.txt'; loadDicts(); }
+}
+async function deleteDict() {
+  if (!curDict) return toast('请先选择词库', false);
+  if (!confirm(`确认删除词库 ${curDict}.txt ？`)) return;
+  const r = await api('dict/delete', { name: curDict });
+  toast(r.message || '完成', r.success);
+  if (r.success) { curDict = ''; document.getElementById('editor').value = ''; document.getElementById('cur-name').textContent = '未选择词库'; loadDicts(); }
+}
+async function reloadEngine() {
+  const r = await api('reload', {});
+  toast(r.message || '完成', r.success);
+  loadDicts();
+}
+
+async function runTest() {
+  const msg = document.getElementById('test-msg').value.trim();
+  if (!msg) return toast('请输入测试消息', false);
+  const r = await api('test', {
+    message: msg,
+    user_id: document.getElementById('test-uid').value.trim(),
+    group_id: document.getElementById('test-gid').value.trim(),
+  });
+  const out = document.getElementById('test-out');
+  if (!r.success) { out.textContent = r.message || '失败'; return; }
+  if (!r.matched) { out.textContent = '（没有命中任何指令）'; return; }
+  let html = '';
+  (r.outputs || []).forEach(seg => {
+    const label = { text: '文本', image: '图片', video: '视频', voice: '语音', file: '文件', ark: 'ARK' }[seg.type] || seg.type;
+    html += `<div class="seg"><span class="k">${label}${r.md_mode && seg.type === 'text' ? '·MD' : ''}</span>${esc(seg.content)}</div>`;
+  });
+  (r.errors || []).forEach(e => { html += `<div class="seg errbox">⚠ ${esc(e)}</div>`; });
+  out.innerHTML = html || '（无输出）';
+}
+
+async function loadGlobals() {
+  const r = await api('globals');
+  const tb = document.querySelector('#glb-table tbody');
+  tb.innerHTML = '';
+  Object.entries(r.globals || {}).forEach(([k, v]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(k)}</td><td>${esc(v)}</td><td><button class="danger" data-k="${esc(k)}">删</button></td>`;
+    tr.querySelector('button').onclick = async () => {
+      const r2 = await api('globals');
+      delete r2.globals[k];
+      await api('globals', { globals: r2.globals });
+      loadGlobals();
+    };
+    tb.appendChild(tr);
+  });
+}
+async function addGlobal() {
+  const k = document.getElementById('glb-k').value.trim();
+  const v = document.getElementById('glb-v').value;
+  if (!k) return toast('请输入名字', false);
+  const r = await api('globals');
+  r.globals[k] = v;
+  const r2 = await api('globals', { globals: r.globals });
+  toast(r2.message || '完成', r2.success);
+  document.getElementById('glb-k').value = ''; document.getElementById('glb-v').value = '';
+  loadGlobals();
+}
+
+async function loadData() {
+  const r = await api('data');
+  const tb = document.querySelector('#data-table tbody');
+  tb.innerHTML = '';
+  (r.files || []).forEach(f => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="cursor:pointer;color:#5352ed">${esc(f.path)}</td><td>${f.size}B</td><td><button class="danger">删</button></td>`;
+    tr.querySelector('td').onclick = async () => {
+      const r2 = await api('data/content?path=' + encodeURIComponent(f.path));
+      const view = document.getElementById('data-view');
+      view.style.display = 'block';
+      view.textContent = r2.success ? r2.content : (r2.message || '无法预览');
+    };
+    tr.querySelector('button').onclick = async () => {
+      if (!confirm(`删除数据文件 ${f.path} ？`)) return;
+      await api('data/delete', { path: f.path });
+      loadData();
+    };
+    tb.appendChild(tr);
+  });
+}
+
+document.getElementById('editor').addEventListener('input', () => dirty = true);
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveDict(); }
+});
+document.querySelectorAll('.snip').forEach(s => s.onclick = () => {
+  const ed = document.getElementById('editor');
+  const pos = ed.selectionStart;
+  ed.setRangeText(s.textContent, pos, pos, 'end');
+  ed.focus(); dirty = true;
+});
+loadDicts();
+</script>
+</body>
+</html>
