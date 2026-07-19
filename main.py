@@ -144,13 +144,15 @@ async def send_outputs(event, outputs, md_mode) -> None:
                 buttons = (buttons or []) + parsed
         elif seg["type"] == "quote":
             ref_id = event.message_reference_id or None
+    # QQ 开放平台要求键盘按钮必须挂在原生 Markdown 消息上，故含按钮时强制 msg_type=2
+    text_msg_type = 2 if (md_mode or buttons) else None
     sent_text = False
     for seg in outputs:
         kind = seg["type"]
         content = seg.get("content", "")
         if kind == "text":
             if content.strip("\n"):
-                await event.reply(content, msg_type=2 if md_mode else None,
+                await event.reply(content, msg_type=text_msg_type,
                                   buttons=buttons if not sent_text else None,
                                   message_reference_id=ref_id if not sent_text else None)
                 sent_text = True
@@ -165,7 +167,7 @@ async def send_outputs(event, outputs, md_mode) -> None:
         elif kind == "ark" and content:
             await _send_ark(event, content)
     if buttons and not sent_text:
-        await event.reply("请选择：", buttons=buttons, message_reference_id=ref_id)
+        await event.reply("请选择：", msg_type=2, buttons=buttons, message_reference_id=ref_id)
 
 
 async def _send_ark(event, spec: str) -> None:
