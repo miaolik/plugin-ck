@@ -26,10 +26,11 @@ DICT_DIR = BASE_DIR / "dicts"
 DATA_DIR = BASE_DIR / "data"
 DB_DIR = DATA_DIR / "db"
 GLOBAL_FILE = DATA_DIR / "全局变量.json"
+SETTINGS_FILE = DATA_DIR / "设置.json"
 
 MAX_LOOP = 1000
 MAX_CALL_DEPTH = 10
-HTTP_TIMEOUT = 15
+DEFAULT_HTTP_TIMEOUT = 300
 HTTP_MAX_BYTES = 200 * 1024
 
 COMMENT_PREFIXES = ("//", "##", "&&")
@@ -168,6 +169,31 @@ def store_delete(path: str) -> bool:
         f.unlink()
         return True
     return False
+
+
+def settings_load() -> Dict[str, object]:
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def settings_save(data: Dict[str, object]) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def http_timeout() -> int:
+    """URL 访问/下载超时秒数，可在 Web 端「设置」中自定义，默认 300 秒（5 分钟）。"""
+    try:
+        value = int(settings_load().get("http_timeout", DEFAULT_HTTP_TIMEOUT))
+    except (TypeError, ValueError):
+        return DEFAULT_HTTP_TIMEOUT
+    return value if value > 0 else DEFAULT_HTTP_TIMEOUT
 
 
 def globals_load() -> Dict[str, str]:
@@ -393,9 +419,12 @@ class Ctx:
     def __init__(self, *, message: str = "", user_id: str = "", username: str = "",
                  group_id: str = "", guild_id: str = "", channel_id: str = "",
                  message_id: str = "", appid: str = "", robot_name: str = "",
-                 avatar: str = "", ats: Optional[List[str]] = None,
+                 avatar: str = "", role: str = "", chat_type: str = "",
+                 robot_qq: str = "", ats: Optional[List[str]] = None,
                  images: Optional[List[str]] = None, raw_json: str = "",
-                 send: Optional[Callable] = None):
+                 extras: Optional[Dict[str, str]] = None,
+                 send: Optional[Callable] = None,
+                 recall: Optional[Callable] = None):
         self.message = message
         self.user_id = user_id
         self.username = username
@@ -406,10 +435,15 @@ class Ctx:
         self.appid = appid
         self.robot_name = robot_name
         self.avatar = avatar
+        self.role = role
+        self.chat_type = chat_type
+        self.robot_qq = robot_qq
         self.ats = ats or []
         self.images = images or []
         self.raw_json = raw_json
+        self.extras = extras or {}
         self.send = send
+        self.recall = recall
         self.vars: Dict[str, str] = {}
         self.match: Optional[re.Match] = None
         self.outputs: List[Dict[str, str]] = []
@@ -509,8 +543,10 @@ class CKEngine:
         sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
                   group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
                   message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, ats=ctx.ats, images=ctx.images,
-                  raw_json=ctx.raw_json, send=ctx.send)
+                  avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
+                  robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
+                  raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
+                  recall=ctx.recall)
         sub.match = m
         try:
             await self._run_lines(blk.lines, sub, depth + 1)
@@ -682,19 +718,30 @@ class CKEngine:
             return ctx.robot_name
         if name in ("Msgbar", "newMsgID", "消息ID"):
             return ctx.message_id
+        if name in ("身份", "MemberRole", "member_role"):
+            return ctx.role
+        if name in ("场景", "ChatType", "消息场景"):
+            return ctx.chat_type
+        if name in ("机器人QQ", "robotQQ"):
+            return ctx.robot_qq
+        if name in ("AT数量", "AT个数"):
+            return str(len(ctx.ats))
+        if name in ("图片数量", "IMG数量"):
+            return str(len(ctx.images))
         if name == "JSON":
             return ctx.raw_json
-        if name in ("Time", "NDTime"):
+        if name in ("Time", "NDTime", "毫秒戳"):
             return str(int(time.time() * 1000))
+        if name == "秒戳":
+            return str(int(time.time()))
+        if name in ctx.extras:
+            return ctx.extras[name]
         if name.startswith("时间"):
             return self._format_time(name[2:])
-        m = re.fullmatch(r"随机数(\-?\w+)-(\-?\w+)", name)
+        m = re.fullmatch(r"随机数(-?\d+)-(-?\d+)", name)
         if m:
-            try:
-                lo, hi = int(m.group(1)), int(m.group(2))
-                return str(random.randint(min(lo, hi), max(lo, hi)))
-            except ValueError:
-                return None
+            lo, hi = int(m.group(1)), int(m.group(2))
+            return str(random.randint(min(lo, hi), max(lo, hi)))
         m = re.fullmatch(r"随机数([a-zA-Z])-([a-zA-Z])", name)
         if m:
             lo, hi = ord(m.group(1)), ord(m.group(2))
@@ -723,11 +770,13 @@ class CKEngine:
                 return ""
         if name.startswith("全局."):
             return globals_load().get(name[3:], "")
+        if name in ctx.extras:
+            return ctx.extras[name]
         return None
 
     @staticmethod
     def _format_time(fmt: str) -> str:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))  # 北京时间 UTC+8
         weekdays = "一二三四五六日"
         out = fmt
         out = out.replace("yyyy", now.strftime("%Y"))
@@ -798,6 +847,19 @@ class CKEngine:
             data = globals_load()
             data[args[0]] = _eval_arith_brackets(args[1] if len(args) > 1 else "").strip()
             globals_save(data)
+            return ""
+        if name == "全局删":
+            key = rest.strip()
+            if not key:
+                raise CKError("$全局删$ 缺少变量名")
+            data = globals_load()
+            data.pop(key, None)
+            globals_save(data)
+            return ""
+        if name == "撤回":
+            if not ctx.recall:
+                raise CKError("$撤回$ 当前环境不支持")
+            await ctx.recall(rest.strip())
             return ""
 
         if name == "字符串长":
@@ -986,7 +1048,7 @@ class CKEngine:
         if not url.startswith(("http://", "https://")):
             raise CKError(f"$访问$ URL 无效: {url}")
         try:
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:
                     body = await resp.content.read(HTTP_MAX_BYTES)
@@ -1007,7 +1069,7 @@ class CKEngine:
         elif data:
             kwargs["data"] = dict(urllib.parse.parse_qsl(data)) or data
         try:
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, **kwargs) as resp:
                     body = await resp.content.read(HTTP_MAX_BYTES)
@@ -1021,7 +1083,7 @@ class CKEngine:
         target = _safe_rel_path(DATA_DIR, local_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            timeout = aiohttp.ClientTimeout(total=60)
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:
                     content = await resp.content.read(20 * 1024 * 1024)
@@ -1035,8 +1097,10 @@ class CKEngine:
         sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
                   group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
                   message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, ats=ctx.ats, images=ctx.images,
-                  raw_json=ctx.raw_json, send=ctx.send)
+                  avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
+                  robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
+                  raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
+                  recall=ctx.recall)
         try:
             await self.run_command(command, sub, depth)
         except CKError:
@@ -1060,7 +1124,7 @@ class CKEngine:
 
         return re.sub(r"@((?:\[[^@]*?\]|\{[^@]*?\}))\s+(\[[^\s]+\])", repl, text)
 
-    _SEND_RE = re.compile(r"±(img|image|video|voice|record|file|at|emoji|ark|md)(?:=([^±]*))?±")
+    _SEND_RE = re.compile(r"±(img|image|video|voice|record|file|at|emoji|ark|md|btn|按钮|引用|quote)(?:=([^±]*))?±")
 
     def _emit(self, text: str, ctx: Ctx) -> None:
         text = text.replace("\\n", "\n").replace("\\r", "\n")
@@ -1086,6 +1150,10 @@ class CKEngine:
                 ctx.md_mode = True
             elif kind == "ark":
                 ctx.out("ark", value)
+            elif kind in ("btn", "按钮"):
+                ctx.out("buttons", value)
+            elif kind in ("引用", "quote"):
+                ctx.out("quote", "")
             pos = m.end()
         tail = text[pos:]
         if tail:

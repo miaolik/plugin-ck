@@ -12,7 +12,8 @@ from core.plugin.decorators import on_load, on_unload
 from core.plugin.web_pages import register_page, register_route, unregister_page
 
 from .ck_engine import (
-    BASE_DIR, DATA_DIR, DICT_DIR, Ctx, engine, globals_load, globals_save,
+    BASE_DIR, DATA_DIR, DEFAULT_HTTP_TIMEOUT, DICT_DIR, Ctx, engine,
+    globals_load, globals_save, http_timeout, settings_load, settings_save,
 )
 
 PAGE_KEY = "ck-editor"
@@ -146,6 +147,28 @@ async def api_test(request):
         "outputs": ctx.outputs,
         "errors": ctx.errors,
     })
+
+
+@register_route("GET", "/api/ext/ck/settings")
+async def api_settings_get(request):
+    return web.json_response({"success": True, "settings": {"http_timeout": http_timeout()},
+                              "defaults": {"http_timeout": DEFAULT_HTTP_TIMEOUT}})
+
+
+@register_route("POST", "/api/ext/ck/settings")
+async def api_settings_save(request):
+    body = await request.json()
+    try:
+        value = int(body.get("http_timeout", DEFAULT_HTTP_TIMEOUT))
+    except (TypeError, ValueError):
+        return _err("http_timeout 必须是正整数（秒）")
+    if value <= 0 or value > 3600:
+        return _err("http_timeout 范围为 1-3600 秒")
+    data = settings_load()
+    data["http_timeout"] = value
+    settings_save(data)
+    return web.json_response({"success": True, "message": "已保存",
+                              "settings": {"http_timeout": value}})
 
 
 @register_route("GET", "/api/ext/ck/globals")
