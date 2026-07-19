@@ -3,6 +3,7 @@
 """词库插件入口：GQ 风格词库引擎 + Web 词库编辑器。"""
 
 import json
+import time
 
 from core.plugin.decorators import handler, on_load
 
@@ -55,7 +56,37 @@ def _user_avatar(event) -> str:
     return ""
 
 
-def build_ctx(event) -> Ctx:
+_BOT_ROLE_CACHE: dict = {}  # (appid, group_id) -> (role, expire_ts)
+_BOT_ROLE_TTL = 300
+
+
+async def _bot_role(event) -> str:
+    """机器人在本群的真实身份（owner/admin/member）。
+
+    优先用 mentions 里解析出的 bot_member_role（被@时才有），否则调用
+    get_bot_member 查询并按群缓存，避免每条消息都打接口。
+    """
+    if not event.is_group or not event.group_id:
+        return ""
+    if event.bot_member_role:
+        return event.bot_member_role
+    key = (event.appid, event.group_id)
+    cached = _BOT_ROLE_CACHE.get(key)
+    now = time.time()
+    if cached and cached[1] > now:
+        return cached[0]
+    role = ""
+    try:
+        member = await event.sender.get_bot_member(event.group_id)
+        if isinstance(member, dict):
+            role = member.get("member_role", "") or ""
+    except Exception:
+        role = ""
+    _BOT_ROLE_CACHE[key] = (role, now + _BOT_ROLE_TTL)
+    return role
+
+
+def build_ctx(event, bot_role: str = "") -> Ctx:
     async def send(outputs, md_mode):
         await send_outputs(event, outputs, md_mode)
 
@@ -73,8 +104,8 @@ def build_ctx(event) -> Ctx:
     extras = {
         "会话ID": event.chat_id or "",
         "ChatId": event.chat_id or "",
-        "机器人身份": event.bot_member_role or "",
-        "BotMemberRole": event.bot_member_role or "",
+        "机器人身份": bot_role or event.bot_member_role or "",
+        "BotMemberRole": bot_role or event.bot_member_role or "",
         "是否艾特机器人": "1" if event.is_at_self else "0",
         "IsAtSelf": "1" if event.is_at_self else "0",
         "引用ID": event.message_reference_id or "",
@@ -196,7 +227,9 @@ async def ck_dispatch(event, match):
     message = (event.content or "").strip()
     if not message:
         return
-    ctx = build_ctx(event)
+    # 仅在确有词库块命中时才查机器人身份，避免每条群消息都打接口
+    bot_role = await _bot_role(event) if engine.find_block(message) else ""
+    ctx = build_ctx(event, bot_role)
     matched = await engine.handle(ctx)
     if not matched:
         return
