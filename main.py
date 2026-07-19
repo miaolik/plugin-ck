@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """词库插件入口：GQ 风格词库引擎 + Web 词库编辑器。"""
 
+import time
 import json
 import re
 from pathlib import Path
@@ -283,13 +284,26 @@ async def ck_dispatch(event, match):
     return True
 
 
+_BTN_DEBOUNCE_SECONDS = 2.0
+_btn_last_click: dict = {}
+
+
 @handler(r"^[\s\S]*$", name="词库按钮回调", desc="回调按钮触发词库", priority=-100,
          event_types=["INTERACTION_CREATE"])
 async def ck_interaction(event, match):
-    """回调按钮(type=1)点击：按钮 data 作为触发词走词库。"""
+    """回调按钮(type=1)点击：按钮 data 作为触发词走词库。同一用户同一按钮短时间内只响应一次。"""
     data = (event.content or "").strip()
     if not data:
         return
+    key = (event.user_id or "", data)
+    now = time.monotonic()
+    last = _btn_last_click.get(key, 0.0)
+    if now - last < _BTN_DEBOUNCE_SECONDS:
+        event.set_callback_code(0)
+        return
+    _btn_last_click[key] = now
+    if len(_btn_last_click) > 10000:
+        _btn_last_click.clear()
     ctx = build_ctx(event)
     ctx.message = data
     matched = await engine.handle(ctx)
