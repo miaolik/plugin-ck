@@ -265,13 +265,35 @@ async def _send_ark(event, spec: str) -> None:
         await event.reply_ark(ark_type, tuple(args))
 
 
-@handler(r"^[\s\S]*$", name="词库", desc="GQ 风格词库触发", priority=-100)
+@handler(r"^[\s\S]*$", name="词库", desc="GQ 风格词库触发", priority=-100,
+         event_types=["GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE",
+                      "C2C_MESSAGE_CREATE", "AT_MESSAGE_CREATE",
+                      "DIRECT_MESSAGE_CREATE", "MESSAGE_CREATE"])
 async def ck_dispatch(event, match):
     message = (event.content or "").strip()
     if not message:
         return
     ctx = build_ctx(event)
     matched = await engine.handle(ctx)
+    if not matched:
+        return
+    if ctx.errors:
+        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+    await send_outputs(event, ctx.outputs, ctx.md_mode)
+    return True
+
+
+@handler(r"^[\s\S]*$", name="词库按钮回调", desc="回调按钮触发词库", priority=-100,
+         event_types=["INTERACTION_CREATE"])
+async def ck_interaction(event, match):
+    """回调按钮(type=1)点击：按钮 data 作为触发词走词库。"""
+    data = (event.content or "").strip()
+    if not data:
+        return
+    ctx = build_ctx(event)
+    ctx.message = data
+    matched = await engine.handle(ctx)
+    event.set_callback_code(0)
     if not matched:
         return
     if ctx.errors:
