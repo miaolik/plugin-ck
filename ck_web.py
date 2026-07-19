@@ -12,7 +12,8 @@ from core.plugin.decorators import on_load, on_unload
 from core.plugin.web_pages import register_page, register_route, unregister_page
 
 from .ck_engine import (
-    BASE_DIR, DATA_DIR, DICT_DIR, Ctx, engine, globals_load, globals_save,
+    BASE_DIR, DATA_DIR, DICT_DIR, DEFAULT_HTTP_TIMEOUT, Ctx, engine,
+    globals_load, globals_save, settings_load, settings_save,
 )
 
 PAGE_KEY = "ck-editor"
@@ -137,6 +138,7 @@ async def api_test(request):
         channel_id=str(body.get("channel_id", "") or ""),
         message_id="TEST_MSG",
         appid="TEST_BOT",
+        chat_type="group",
     )
     matched = await engine.handle(ctx)
     return web.json_response({
@@ -201,6 +203,28 @@ async def api_data_delete(request):
         return _err("文件不存在", 404)
     target.unlink()
     return web.json_response({"success": True, "message": "已删除"})
+
+
+@register_route("GET", "/api/ext/ck/settings")
+async def api_settings_get(request):
+    settings = settings_load()
+    settings.setdefault("http_timeout", DEFAULT_HTTP_TIMEOUT)
+    return web.json_response({"success": True, "settings": settings})
+
+
+@register_route("POST", "/api/ext/ck/settings")
+async def api_settings_save(request):
+    body = await request.json()
+    try:
+        timeout = int(str(body.get("http_timeout", "")).strip())
+    except (TypeError, ValueError):
+        return _err("超时必须是整数（秒）")
+    if not 1 <= timeout <= 3600:
+        return _err("超时范围 1-3600 秒")
+    data = settings_load()
+    data["http_timeout"] = timeout
+    settings_save(data)
+    return web.json_response({"success": True, "message": "已保存"})
 
 
 @on_load
