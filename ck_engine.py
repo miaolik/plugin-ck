@@ -419,9 +419,12 @@ class Ctx:
     def __init__(self, *, message: str = "", user_id: str = "", username: str = "",
                  group_id: str = "", guild_id: str = "", channel_id: str = "",
                  message_id: str = "", appid: str = "", robot_name: str = "",
-                 avatar: str = "", role: str = "", ats: Optional[List[str]] = None,
+                 avatar: str = "", role: str = "", chat_type: str = "",
+                 robot_qq: str = "", ats: Optional[List[str]] = None,
                  images: Optional[List[str]] = None, raw_json: str = "",
-                 send: Optional[Callable] = None):
+                 extras: Optional[Dict[str, str]] = None,
+                 send: Optional[Callable] = None,
+                 recall: Optional[Callable] = None):
         self.message = message
         self.user_id = user_id
         self.username = username
@@ -433,10 +436,14 @@ class Ctx:
         self.robot_name = robot_name
         self.avatar = avatar
         self.role = role
+        self.chat_type = chat_type
+        self.robot_qq = robot_qq
         self.ats = ats or []
         self.images = images or []
         self.raw_json = raw_json
+        self.extras = extras or {}
         self.send = send
+        self.recall = recall
         self.vars: Dict[str, str] = {}
         self.match: Optional[re.Match] = None
         self.outputs: List[Dict[str, str]] = []
@@ -536,8 +543,10 @@ class CKEngine:
         sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
                   group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
                   message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, role=ctx.role, ats=ctx.ats, images=ctx.images,
-                  raw_json=ctx.raw_json, send=ctx.send)
+                  avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
+                  robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
+                  raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
+                  recall=ctx.recall)
         sub.match = m
         try:
             await self._run_lines(blk.lines, sub, depth + 1)
@@ -711,6 +720,14 @@ class CKEngine:
             return ctx.message_id
         if name in ("身份", "MemberRole", "member_role"):
             return ctx.role
+        if name in ("场景", "ChatType", "消息场景"):
+            return ctx.chat_type
+        if name in ("机器人QQ", "robotQQ"):
+            return ctx.robot_qq
+        if name in ("AT数量", "AT个数"):
+            return str(len(ctx.ats))
+        if name in ("图片数量", "IMG数量"):
+            return str(len(ctx.images))
         if name == "JSON":
             return ctx.raw_json
         if name in ("Time", "NDTime"):
@@ -749,6 +766,8 @@ class CKEngine:
                 return ""
         if name.startswith("全局."):
             return globals_load().get(name[3:], "")
+        if name in ctx.extras:
+            return ctx.extras[name]
         return None
 
     @staticmethod
@@ -824,6 +843,19 @@ class CKEngine:
             data = globals_load()
             data[args[0]] = _eval_arith_brackets(args[1] if len(args) > 1 else "").strip()
             globals_save(data)
+            return ""
+        if name == "全局删":
+            key = rest.strip()
+            if not key:
+                raise CKError("$全局删$ 缺少变量名")
+            data = globals_load()
+            data.pop(key, None)
+            globals_save(data)
+            return ""
+        if name == "撤回":
+            if not ctx.recall:
+                raise CKError("$撤回$ 当前环境不支持")
+            await ctx.recall(rest.strip())
             return ""
 
         if name == "字符串长":
@@ -1061,8 +1093,10 @@ class CKEngine:
         sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
                   group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
                   message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, role=ctx.role, ats=ctx.ats, images=ctx.images,
-                  raw_json=ctx.raw_json, send=ctx.send)
+                  avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
+                  robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
+                  raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
+                  recall=ctx.recall)
         try:
             await self.run_command(command, sub, depth)
         except CKError:
@@ -1086,7 +1120,7 @@ class CKEngine:
 
         return re.sub(r"@((?:\[[^@]*?\]|\{[^@]*?\}))\s+(\[[^\s]+\])", repl, text)
 
-    _SEND_RE = re.compile(r"±(img|image|video|voice|record|file|at|emoji|ark|md)(?:=([^±]*))?±")
+    _SEND_RE = re.compile(r"±(img|image|video|voice|record|file|at|emoji|ark|md|btn|按钮|引用|quote)(?:=([^±]*))?±")
 
     def _emit(self, text: str, ctx: Ctx) -> None:
         text = text.replace("\\n", "\n").replace("\\r", "\n")
@@ -1112,6 +1146,10 @@ class CKEngine:
                 ctx.md_mode = True
             elif kind == "ark":
                 ctx.out("ark", value)
+            elif kind in ("btn", "按钮"):
+                ctx.out("buttons", value)
+            elif kind in ("引用", "quote"):
+                ctx.out("quote", "")
             pos = m.end()
         tail = text[pos:]
         if tail:

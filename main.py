@@ -81,9 +81,34 @@ def _avatar_url(event) -> str:
     return ""
 
 
+def _event_extras(event) -> dict:
+    """框架 SDK 提供的补充变量（中英文名映射）。"""
+    chat_id = getattr(event, "chat_id", "") or ""
+    timestamp = str(getattr(event, "timestamp", "") or "")
+    event_type = getattr(event, "event_type", "") or ""
+    ref_id = getattr(event, "message_reference_id", "") or ""
+    at_self = "1" if getattr(event, "is_at_self", False) else "0"
+    bot_role = getattr(event, "bot_member_role", "") or ""
+    scene_source = getattr(event, "scene_source", "") or ""
+    return {
+        "会话ID": chat_id, "ChatId": chat_id,
+        "消息时间": timestamp, "时间戳": timestamp,
+        "事件类型": event_type, "EventType": event_type,
+        "引用ID": ref_id, "REFIDX": ref_id,
+        "是否艾特机器人": at_self, "IsAtSelf": at_self,
+        "机器人身份": bot_role, "BotMemberRole": bot_role,
+        "消息来源": scene_source,
+    }
+
+
 def build_ctx(event) -> Ctx:
     async def send(outputs, md_mode):
         await send_outputs(event, outputs, md_mode)
+
+    async def recall(message_id: str = ""):
+        if message_id:
+            return await event.recall(message_id=message_id)
+        return await event.recall()
 
     return Ctx(
         message=_clean_message(event),
@@ -99,8 +124,12 @@ def build_ctx(event) -> Ctx:
         role=getattr(event, "member_role", "") or _event_get(event, "d/author/member_role"),
         ats=_event_ats(event),
         images=_event_images(event),
+        chat_type=getattr(event, "chat_type", "") or "",
+        robot_qq=str(getattr(getattr(event, "sender", None), "_bot_qq", "") or ""),
         raw_json=_event_raw_json(event),
+        extras=_event_extras(event),
         send=send,
+        recall=recall,
     )
 
 
@@ -155,18 +184,64 @@ async def _send_media(event, kind: str, content: str) -> None:
         await reply(data)
 
 
+def _parse_buttons(spec: str) -> list:
+    """±btn=文本;值|文本;值^下一行± → 框架按钮结构。
+
+    值为 URL → 链接按钮；以 / 开头 → 填充输入框(type=2)；其余 → 回调(type=1)。省略值时用文本。"""
+    rows = []
+    for row in spec.split("^"):
+        btns = []
+        for item in row.split("|"):
+            item = item.strip()
+            if not item:
+                continue
+            text, _, value = item.partition(";")
+            text, value = text.strip(), (value or text).strip()
+            if value.startswith(("http://", "https://")):
+                btns.append({"text": text, "link": value})
+            elif value.startswith("/"):
+                btns.append({"text": text, "data": value, "type": 2})
+            else:
+                btns.append({"text": text, "data": value, "type": 1})
+        if btns:
+            rows.append(btns)
+    return rows
+
+
 async def send_outputs(event, outputs, md_mode) -> None:
-    """按片段顺序发送：文本合并成一条，媒体分条发送。"""
+    """按片段顺序发送：文本合并成一条，媒体分条发送；按钮/引用附加到首条文本。"""
+    buttons = None
+    quote_ref = ""
+    for seg in outputs:
+        if seg["type"] == "buttons" and seg.get("content"):
+            buttons = _parse_buttons(seg["content"]) or None
+        elif seg["type"] == "quote":
+            quote_ref = getattr(event, "message_reference_id", "") or ""
     for seg in outputs:
         kind = seg["type"]
         content = seg.get("content", "")
         if kind == "text":
             if content.strip("\n"):
-                await event.reply(content, msg_type=2 if md_mode else None)
+                kwargs = {}
+                if buttons:
+                    kwargs["buttons"] = buttons
+                    buttons = None
+                if quote_ref:
+                    kwargs["message_reference_id"] = quote_ref
+                    quote_ref = ""
+                await event.reply(content, msg_type=2 if md_mode else None, **kwargs)
         elif kind in ("image", "video", "voice", "file") and content:
             await _send_media(event, kind, content)
         elif kind == "ark" and content:
             await _send_ark(event, content)
+    # 只有按钮/引用而无文本时，单独发一条
+    if buttons or quote_ref:
+        kwargs = {}
+        if buttons:
+            kwargs["buttons"] = buttons
+        if quote_ref:
+            kwargs["message_reference_id"] = quote_ref
+        await event.reply(" ", **kwargs)
 
 
 async def _send_ark(event, spec: str) -> None:

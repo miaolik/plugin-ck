@@ -112,7 +112,7 @@ $写 签到 %ID% %时间MMdd%$"></textarea>
       <span class="snip">%ID%</span><span class="snip">%昵称%</span><span class="snip">%群ID%</span><span class="snip">%频道号%</span><span class="snip">%子频道号%</span><span class="snip">%参数1%</span><span class="snip">%参数-1%</span><span class="snip">%括号1%</span><span class="snip">%AT0%</span><span class="snip">%IMG0%</span><span class="snip">%时间yyyy年MM月dd日 HH:mm:ss%</span><span class="snip">%时间MMdd%</span><span class="snip">%Time%</span><span class="snip">%随机数1-100%</span>
       <h4>变量</h4>
       <p>局部变量：<code>变:123</code>（单字符名，仅当前语句块有效），使用 <code>%变%</code>。</p>
-      <p>全局变量：<code>$全局写 名字 值$</code> / <code>$全局读 名字 默认值$</code>，或 <code>%全局.名字%</code>，持久保存、跨指令可用。</p>
+      <p>全局变量：<code>$全局写 名字 值$</code> / <code>$全局读 名字 默认值$</code> / <code>$全局删 名字$</code>，或 <code>%全局.名字%</code>，持久保存、跨指令可用。<code>$撤回$</code>/<code>$撤回 消息ID$</code> 撤回消息。</p>
       <h4>读写数据</h4>
       <span class="snip">$读 金币 %ID% 0$</span><span class="snip">$写 金币 %ID% 100$</span><span class="snip">$删除 路径$</span>
       <p>数据保存在插件 data/ 目录下，文件内容为「键 = 值」。推荐路径：<code>%群ID%/金币 %ID%</code>。</p>
@@ -133,7 +133,7 @@ i:[%i%+1]
       <p>条件支持 <code>==</code> <code>!=</code> <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code>；<code>[算式]</code> 支持 + - * / % 和括号。</p>
       <h4>发送消息</h4>
       <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
-      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>\n</code> 或 <code>\r</code> 为换行。</p>
+      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调）；<code>\n</code> 或 <code>\r</code> 为换行。</p>
       <h4>文本处理</h4>
       <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
       <h4>随机</h4>
@@ -176,7 +176,7 @@ $数据库 声明 示例 测试.db$</span>
     <div class="tab-body help" id="tab-4">
       <p style="color:#747d8c">点击右上角「复制」可直接复制配置例子到剪贴板，粘贴进词库即可使用。</p>
       <h4>发送者 / 会话变量</h4>
-      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID；<code>%昵称%</code>/<code>%UserName%</code> 发送者昵称；<code>%头像%</code>/<code>%UserAvatar%</code> 发送者头像URL；<code>%身份%</code>/<code>%MemberRole%</code> 群内身份（owner=群主/admin=管理/member=成员）；<code>%群ID%</code>/<code>%群号%</code> 群ID；<code>%频道号%</code>/<code>%GuildId%</code> 频道ID；<code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID；<code>%robot%</code> 机器人AppID；<code>%robotName%</code>/<code>%机器人昵称%</code> 机器人昵称；<code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID。</p>
+      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID；<code>%昵称%</code>/<code>%UserName%</code> 发送者昵称；<code>%头像%</code>/<code>%UserAvatar%</code> 发送者头像URL；<code>%身份%</code>/<code>%MemberRole%</code> 群内身份（owner=群主/admin=管理/member=成员）；<code>%群ID%</code>/<code>%群号%</code> 群ID；<code>%频道号%</code>/<code>%GuildId%</code> 频道ID；<code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID；<code>%robot%</code> 机器人AppID；<code>%robotName%</code>/<code>%机器人昵称%</code> 机器人昵称；<code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID；<code>%场景%</code>/<code>%ChatType%</code> 消息场景（group/direct/channel）；<code>%会话ID%</code>/<code>%ChatId%</code> 当前会话ID；<code>%机器人QQ%</code> 机器人QQ号；<code>%机器人身份%</code> 机器人在本群身份；<code>%是否艾特机器人%</code> 1/0；<code>%AT数量%</code>/<code>%图片数量%</code> @人数/图片数；<code>%消息时间%</code>/<code>%时间戳%</code> 消息时间戳；<code>%事件类型%</code> 如 GROUP_MESSAGE_CREATE；<code>%引用ID%</code>/<code>%REFIDX%</code> 可引用标识；<code>%消息来源%</code> message_scene.source。</p>
       <div class="copy-block">我的信息
 你好 %昵称%！
 你的ID：%ID%
