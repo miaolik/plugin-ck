@@ -15,6 +15,11 @@
   .dict-item:hover { background: #f1f3f9; }
   .dict-item.active { background: #eef2ff; border-left-color: #5352ed; font-weight: 600; }
   .dict-item small { color: #a4b0be; }
+  .dict-item.disabled span.dname { color: #a4b0be; text-decoration: line-through; }
+  .dict-switch { width: 30px; height: 17px; border-radius: 9px; background: #ccd1dc; position: relative; flex: 0 0 auto; margin-left: 8px; cursor: pointer; transition: background .15s; }
+  .dict-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .dict-switch.on { background: #5352ed; }
+  .dict-switch.on::after { left: 15px; }
   .sidebar-btns { padding: 10px; display: flex; gap: 6px; flex-wrap: wrap; border-top: 1px solid #e4e7ee; }
   .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; background: #fff; border-bottom: 1px solid #e4e7ee; flex-wrap: wrap; }
@@ -178,8 +183,8 @@ i:[%i%+1]
       <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±文本±</span><span class="snip">±无后缀±</span><span class="snip">±自动撤回=10±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
       <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±文本±</code> 强制纯文本（markdown 语法原样显示）；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 本次发出的消息 N 秒后自动撤回；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调），<code>±小按钮=...±</code> 同语法但字号更小；<code>\n</code> 或 <code>\r</code> 为换行。</p>
       <h4>主动消息 / 召回 / 成员 / 邀请链接</h4>
-      <span class="snip">$主动私聊 %ID% 内容$</span><span class="snip">$主动群发 %群ID% 内容$</span><span class="snip">$召回 %ID% 内容$</span><span class="snip">$强制召回 %ID% 内容$</span><span class="snip">$群成员 %ID%$</span><span class="snip">$机器人成员$</span><span class="snip">$邀请链接$</span>
-      <p><code>$主动私聊/主动群发$</code> 不回复当前消息而直接向目标发送（配合 <code>$调用 毫秒 指令$</code> 可延迟发送）；<code>$群成员 ID$</code>/<code>$机器人成员$</code> 返回成员 JSON，用 <code>@%变% [字段]</code> 取值；<code>$邀请链接 可选数据$</code> 生成专属邀请链接。以上仅真实消息环境可用，Web 沙盒测试会提示不支持。</p>
+      <span class="snip">$主动私聊 %ID% 内容$</span><span class="snip">$主动群发 %群ID% 内容$</span><span class="snip">$召回 %ID% 内容$</span><span class="snip">$强制召回 %ID% 内容$</span><span class="snip">$群成员 %ID%$</span><span class="snip">$机器人成员$</span><span class="snip">$邀请链接$</span><span class="snip">$官方API GET /路径$</span>
+      <p><code>$主动私聊/主动群发$</code> 不回复当前消息而直接向目标发送（配合 <code>$调用 毫秒 指令$</code> 可延迟发送）；<code>$群成员 ID$</code>/<code>$机器人成员$</code> 返回成员 JSON，用 <code>@%变% [字段]</code> 取值；<code>$邀请链接 可选数据$</code> 生成专属邀请链接；<code>$官方API 方法 /路径 JSON体$</code> 用框架凭证直调 QQ 开放平台接口。以上仅真实消息环境可用，Web 沙盒测试会提示不支持。</p>
       <h4>文本处理</h4>
       <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
       <h4>随机</h4>
@@ -222,7 +227,26 @@ $数据库 声明 示例 测试.db$</span>
     <div class="tab-body help" id="tab-4">
       <p style="color:#747d8c">点击右上角「复制」可直接复制配置例子到剪贴板，粘贴进词库即可使用。</p>
       <h4>发送者 / 会话变量</h4>
-      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID；<code>%昵称%</code>/<code>%UserName%</code> 发送者昵称；<code>%头像%</code>/<code>%UserAvatar%</code> 发送者头像URL；<code>%身份%</code>/<code>%MemberRole%</code> 群内身份（owner=群主/admin=管理/member=成员）；<code>%群ID%</code>/<code>%群号%</code> 群ID；<code>%频道号%</code>/<code>%GuildId%</code> 频道ID；<code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID；<code>%robot%</code> 机器人AppID；<code>%robotName%</code>/<code>%机器人昵称%</code> 机器人昵称；<code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID；<code>%场景%</code>/<code>%ChatType%</code> 消息场景（group/direct/channel）；<code>%会话ID%</code>/<code>%ChatId%</code> 当前会话ID；<code>%机器人QQ%</code> 机器人QQ号；<code>%机器人身份%</code> 机器人在本群身份；<code>%是否艾特机器人%</code> 1/0；<code>%AT数量%</code>/<code>%图片数量%</code> @人数/图片数；<code>%消息时间%</code>/<code>%时间戳%</code> 消息时间戳；<code>%事件类型%</code> 如 GROUP_MESSAGE_CREATE；<code>%引用ID%</code>/<code>%REFIDX%</code> 可引用标识；<code>%消息来源%</code> message_scene.source。</p>
+      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID</p>
+      <p><code>%昵称%</code>/<code>%UserName%</code> 发送者昵称</p>
+      <p><code>%头像%</code>/<code>%UserAvatar%</code> 发送者头像URL</p>
+      <p><code>%身份%</code>/<code>%MemberRole%</code> 群内身份（owner=群主/admin=管理/member=成员）</p>
+      <p><code>%群ID%</code>/<code>%群号%</code> 群ID</p>
+      <p><code>%频道号%</code>/<code>%GuildId%</code> 频道ID</p>
+      <p><code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID</p>
+      <p><code>%robot%</code> 机器人AppID</p>
+      <p><code>%robotName%</code>/<code>%机器人昵称%</code> 机器人昵称</p>
+      <p><code>%机器人QQ%</code> 机器人QQ号</p>
+      <p><code>%机器人身份%</code> 机器人在本群身份</p>
+      <p><code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID</p>
+      <p><code>%场景%</code>/<code>%ChatType%</code> 消息场景（group/direct/channel）</p>
+      <p><code>%会话ID%</code>/<code>%ChatId%</code> 当前会话ID</p>
+      <p><code>%是否艾特机器人%</code> 1/0</p>
+      <p><code>%AT数量%</code>/<code>%图片数量%</code> @人数/图片数</p>
+      <p><code>%消息时间%</code>/<code>%时间戳%</code> 消息时间戳</p>
+      <p><code>%事件类型%</code> 如 GROUP_MESSAGE_CREATE</p>
+      <p><code>%引用ID%</code>/<code>%REFIDX%</code> 可引用标识</p>
+      <p><code>%消息来源%</code> message_scene.source</p>
       <div class="copy-block">我的信息
 你好 %昵称%！
 你的ID：%ID%
@@ -285,6 +309,7 @@ $撤回$
 ±自动撤回=10±这条消息 10 秒后自动消失</div>
       <h4>主动消息 / 召回 / 成员查询 / 邀请链接</h4>
       <p><code>$主动私聊 ID 内容$</code> / <code>$主动群发 群ID 内容$</code> 主动发送；<code>$召回 ID 内容$</code> / <code>$强制召回 ID 内容$</code> 召回消息；<code>$群成员 ID$</code> / <code>$机器人成员$</code> 返回成员 JSON；<code>$邀请链接$</code> 生成专属邀请链接。</p>
+      <p style="color:#e67e22">注意：成员查询仅限群聊；查自己时接口失败会自动降级用消息自带的数据；<code>$机器人成员$</code> 需机器人被@过一次后才能查到；这些函数在沙盒测试中不可用，需真实消息环境。失败时回复会附 ⚠ 原因。</p>
       <div class="copy-block">查我
 M:$群成员 %ID%$
 群昵称：@%M% [username]
@@ -343,7 +368,15 @@ R:$访问 https://api.github.com/repos/ElainaCore/ElainaBot_v2$
 仓库：@%R% [full_name]\n
 星标：@%R% [stargazers_count]</div>
       <h4>内置示例词库</h4>
-      <p>插件自带 <code>dicts/变量示例.txt</code>：对机器人直接发 <b>示例菜单</b>，即可逐项体验全部变量与功能，也是词库开发的实践模板。</p>
+      <p>插件自带 <code>dicts/变量示例.txt</code>：对机器人直接发 <b>示例菜单</b>（分两页，发 <b>示例菜单2</b> 看第二页），即可逐项体验全部变量与功能，也是词库开发的实践模板。</p>
+      <h4>词库文件开关</h4>
+      <p>左侧文件列表每个词库名右侧有启用开关：关闭后该文件不参与触发（仍可编辑），打开即时生效。</p>
+      <h4>官方API（直调 QQ 开放平台接口）</h4>
+      <p><code>$官方API 方法 /路径 JSON体$</code>：用框架自身的调用凭证直接请求 <code>https://api.sgroup.qq.com</code>，方法支持 GET/POST/PUT/PATCH/DELETE，JSON体可省略；返回 <code>{"success":是否成功,"data":接口返回}</code>，用 <code>@%变% [data.字段]</code> 取值。需真实消息环境（沙盒不可用）。</p>
+      <div class="copy-block">api测试
+R:$官方API POST /v2/groups/%群ID%/messages {"content":"自定义消息体","msg_type":0,"msg_id":"%消息ID%"}$
+发送结果：@%R% [success]
+消息ID：@%R% [data.id]</div>
       <h4>综合例子：签到（可直接复制使用）</h4>
       <div class="copy-block">签到
 如果:$读 签到 %ID% 0$==%时间MMdd%
@@ -432,8 +465,19 @@ async function loadDicts() {
   list.innerHTML = '';
   (r.dicts || []).forEach(d => {
     const div = document.createElement('div');
-    div.className = 'dict-item' + (d.name === curDict ? ' active' : '');
-    div.innerHTML = `<span>${esc(d.name)}</span><small>${d.lines}行</small>`;
+    const on = d.enabled !== false;
+    div.className = 'dict-item' + (d.name === curDict ? ' active' : '') + (on ? '' : ' disabled');
+    div.innerHTML = `<span class="dname">${esc(d.name)}</span><small>${d.lines}行</small>`;
+    const sw = document.createElement('div');
+    sw.className = 'dict-switch' + (on ? ' on' : '');
+    sw.title = on ? '点击禁用（禁用后不参与触发）' : '点击启用';
+    sw.onclick = async (e) => {
+      e.stopPropagation();
+      const r2 = await api('dict/toggle', { name: d.name, enabled: !on });
+      if (r2.success) { toast(r2.message); loadDicts(); }
+      else toast(r2.message || '操作失败', false);
+    };
+    div.appendChild(sw);
     div.onclick = () => openDict(d.name);
     list.appendChild(div);
   });

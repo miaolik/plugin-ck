@@ -208,6 +208,26 @@ def settings_save(data: Dict[str, object]) -> None:
     SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def disabled_dicts() -> List[str]:
+    """被禁用的词库文件名列表（不含 .txt），禁用的文件不参与触发。"""
+    value = settings_load().get("disabled_dicts", [])
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return []
+
+
+def set_dict_enabled(name: str, enabled: bool) -> None:
+    data = settings_load()
+    raw = data.get("disabled_dicts")
+    disabled = {str(v) for v in raw} if isinstance(raw, list) else set()
+    if enabled:
+        disabled.discard(name)
+    else:
+        disabled.add(name)
+    data["disabled_dicts"] = sorted(disabled)
+    settings_save(data)
+
+
 def http_timeout() -> int:
     """URL 访问/下载超时秒数，可在 Web 端「设置」中自定义，默认 300 秒（5 分钟）。"""
     try:
@@ -505,7 +525,10 @@ class CKEngine:
         blocks: List[Block] = []
         init_lines: List[str] = []
         errors: List[str] = []
+        disabled = set(disabled_dicts())
         for f in sorted(DICT_DIR.glob("*.txt")):
+            if f.stem in disabled:
+                continue
             try:
                 text = f.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
@@ -1074,6 +1097,28 @@ class CKEngine:
             if not member:
                 raise CKError("$机器人成员$ 查询失败（需在群聊中使用）")
             return json.dumps(member, ensure_ascii=False)
+        if name == "官方API":
+            action = ctx.actions.get(name)
+            if not action:
+                raise CKError("$官方API$ 当前环境不支持")
+            parts = rest.strip().split(" ", 2)
+            if len(parts) < 2:
+                raise CKError("$官方API$ 格式：$官方API 方法 /路径 JSON体$")
+            method = parts[0].upper()
+            if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                raise CKError("$官方API$ 方法需为 GET/POST/PUT/PATCH/DELETE")
+            path = parts[1]
+            if not path.startswith("/"):
+                raise CKError("$官方API$ 路径需以 / 开头，如 /v2/groups/群ID/messages")
+            payload = None
+            body = parts[2].strip() if len(parts) > 2 else ""
+            if body:
+                try:
+                    payload = json.loads(body)
+                except json.JSONDecodeError as exc:
+                    raise CKError(f"$官方API$ JSON体无效: {exc}")
+            ok, result = await action(method, path, payload)
+            return json.dumps({"success": bool(ok), "data": result}, ensure_ascii=False)
 
         raise CKError(f"未知函数: ${name}$")
 

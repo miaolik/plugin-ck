@@ -169,12 +169,39 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
     async def group_member(uid):
         if not event.group_id:
             return None
-        return await event.sender.get_group_member(event.group_id, uid)
+        member = await event.sender.get_group_member(event.group_id, uid)
+        if member:
+            return member
+        # 查自己时接口失败可降级用消息自带的 author 数据
+        if uid == (event.user_id or ""):
+            author = (getattr(event, "raw", None) or {}).get("d", {}).get("author", {})
+            if isinstance(author, dict) and author:
+                return author
+            fallback = {}
+            if event.username:
+                fallback["username"] = event.username
+            if getattr(event, "member_role", ""):
+                fallback["member_role"] = event.member_role
+            if fallback:
+                fallback["member_openid"] = uid
+                return fallback
+        return None
 
     async def bot_member():
         if not event.group_id:
             return None
-        return await event.sender.get_bot_member(event.group_id)
+        member = await event.sender.get_bot_member(event.group_id)
+        if member:
+            return member
+        # 降级：被@时 mentions 解析出的机器人身份
+        role = getattr(event, "bot_member_role", "") or ""
+        return {"member_role": role} if role else None
+
+    async def open_api(method, path, payload):
+        kwargs = {}
+        if payload is not None:
+            kwargs["json"] = payload
+        return await event.sender._request(method, path, **kwargs)
 
     actions = {
         "主动私聊": send_to_user,
@@ -184,6 +211,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         "邀请链接": share_link,
         "群成员": group_member,
         "机器人成员": bot_member,
+        "官方API": open_api,
     }
 
     bot = _get_bot(event.appid)
@@ -414,10 +442,11 @@ async def ck_interaction(event, match):
     _btn_last_click[key] = now
     if len(_btn_last_click) > 10000:
         _btn_last_click.clear()
+    # 先应答交互，再执行词库；否则耗时操作（如接口查询）会导致客户端提示“第三方请求失败”
+    event.set_callback_code(0)
     ctx = build_ctx(event)
     ctx.message = data
     matched = await engine.handle(ctx)
-    event.set_callback_code(0)
     if not matched:
         return
     if ctx.errors:
