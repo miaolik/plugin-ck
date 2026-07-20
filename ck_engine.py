@@ -208,6 +208,26 @@ def settings_save(data: Dict[str, object]) -> None:
     SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def disabled_dicts() -> List[str]:
+    """被禁用的词库文件名列表（不含 .txt），禁用的文件不参与触发。"""
+    value = settings_load().get("disabled_dicts", [])
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return []
+
+
+def set_dict_enabled(name: str, enabled: bool) -> None:
+    data = settings_load()
+    raw = data.get("disabled_dicts")
+    disabled = {str(v) for v in raw} if isinstance(raw, list) else set()
+    if enabled:
+        disabled.discard(name)
+    else:
+        disabled.add(name)
+    data["disabled_dicts"] = sorted(disabled)
+    settings_save(data)
+
+
 def http_timeout() -> int:
     """URL 访问/下载超时秒数，可在 Web 端「设置」中自定义，默认 300 秒（5 分钟）。"""
     try:
@@ -505,7 +525,10 @@ class CKEngine:
         blocks: List[Block] = []
         init_lines: List[str] = []
         errors: List[str] = []
+        disabled = set(disabled_dicts())
         for f in sorted(DICT_DIR.glob("*.txt")):
+            if f.stem in disabled:
+                continue
             try:
                 text = f.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:

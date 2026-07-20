@@ -13,7 +13,8 @@ from core.plugin.web_pages import register_page, register_route, unregister_page
 
 from .ck_engine import (
     BASE_DIR, DATA_DIR, DEFAULT_HTTP_TIMEOUT, DICT_DIR, Ctx, engine,
-    globals_load, globals_save, http_timeout, settings_load, settings_save,
+    disabled_dicts, globals_load, globals_save, http_timeout,
+    set_dict_enabled, settings_load, settings_save,
 )
 
 PAGE_KEY = "ck-editor"
@@ -34,6 +35,7 @@ def _err(message: str, status: int = 400) -> web.Response:
 @register_route("GET", "/api/ext/ck/dicts")
 async def api_dicts(request):
     DICT_DIR.mkdir(parents=True, exist_ok=True)
+    disabled = set(disabled_dicts())
     files = []
     for f in sorted(DICT_DIR.glob("*.txt")):
         text = f.read_text(encoding="utf-8", errors="replace")
@@ -42,6 +44,7 @@ async def api_dicts(request):
             "size": f.stat().st_size,
             "mtime": int(f.stat().st_mtime),
             "lines": text.count("\n") + 1,
+            "enabled": f.stem not in disabled,
         })
     return web.json_response({
         "success": True,
@@ -112,6 +115,23 @@ async def api_dict_delete(request):
     engine.load()
     await engine.run_init()
     return web.json_response({"success": True, "message": "已删除"})
+
+
+@register_route("POST", "/api/ext/ck/dict/toggle")
+async def api_dict_toggle(request):
+    body = await request.json()
+    name = str(body.get("name", ""))
+    try:
+        path = _dict_path(name)
+    except ValueError as exc:
+        return _err(str(exc))
+    if not path.exists():
+        return _err("词库不存在", 404)
+    enabled = bool(body.get("enabled", True))
+    set_dict_enabled(name, enabled)
+    engine.load()
+    return web.json_response({"success": True, "name": name, "enabled": enabled,
+                              "message": "已启用" if enabled else "已禁用"})
 
 
 @register_route("POST", "/api/ext/ck/reload")

@@ -15,6 +15,11 @@
   .dict-item:hover { background: #f1f3f9; }
   .dict-item.active { background: #eef2ff; border-left-color: #5352ed; font-weight: 600; }
   .dict-item small { color: #a4b0be; }
+  .dict-item.disabled span.dname { color: #a4b0be; text-decoration: line-through; }
+  .dict-switch { width: 30px; height: 17px; border-radius: 9px; background: #ccd1dc; position: relative; flex: 0 0 auto; margin-left: 8px; cursor: pointer; transition: background .15s; }
+  .dict-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .dict-switch.on { background: #5352ed; }
+  .dict-switch.on::after { left: 15px; }
   .sidebar-btns { padding: 10px; display: flex; gap: 6px; flex-wrap: wrap; border-top: 1px solid #e4e7ee; }
   .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; background: #fff; border-bottom: 1px solid #e4e7ee; flex-wrap: wrap; }
@@ -222,7 +227,26 @@ $数据库 声明 示例 测试.db$</span>
     <div class="tab-body help" id="tab-4">
       <p style="color:#747d8c">点击右上角「复制」可直接复制配置例子到剪贴板，粘贴进词库即可使用。</p>
       <h4>发送者 / 会话变量</h4>
-      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID；<code>%昵称%</code>/<code>%UserName%</code> 发送者昵称；<code>%头像%</code>/<code>%UserAvatar%</code> 发送者头像URL；<code>%身份%</code>/<code>%MemberRole%</code> 群内身份（owner=群主/admin=管理/member=成员）；<code>%群ID%</code>/<code>%群号%</code> 群ID；<code>%频道号%</code>/<code>%GuildId%</code> 频道ID；<code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID；<code>%robot%</code> 机器人AppID；<code>%robotName%</code>/<code>%机器人昵称%</code> 机器人昵称；<code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID；<code>%场景%</code>/<code>%ChatType%</code> 消息场景（group/direct/channel）；<code>%会话ID%</code>/<code>%ChatId%</code> 当前会话ID；<code>%机器人QQ%</code> 机器人QQ号；<code>%机器人身份%</code> 机器人在本群身份；<code>%是否艾特机器人%</code> 1/0；<code>%AT数量%</code>/<code>%图片数量%</code> @人数/图片数；<code>%消息时间%</code>/<code>%时间戳%</code> 消息时间戳；<code>%事件类型%</code> 如 GROUP_MESSAGE_CREATE；<code>%引用ID%</code>/<code>%REFIDX%</code> 可引用标识；<code>%消息来源%</code> message_scene.source。</p>
+      <p><code>%ID%</code>/<code>%UserId%</code> 发送者ID</p>
+      <p><code>%昵称%</code>/<code>%UserName%</code> 发送者昵称</p>
+      <p><code>%头像%</code>/<code>%UserAvatar%</code> 发送者头像URL</p>
+      <p><code>%身份%</code>/<code>%MemberRole%</code> 群内身份（owner=群主/admin=管理/member=成员）</p>
+      <p><code>%群ID%</code>/<code>%群号%</code> 群ID</p>
+      <p><code>%频道号%</code>/<code>%GuildId%</code> 频道ID</p>
+      <p><code>%子频道号%</code>/<code>%ChannelId%</code> 子频道ID</p>
+      <p><code>%robot%</code> 机器人AppID</p>
+      <p><code>%robotName%</code>/<code>%机器人昵称%</code> 机器人昵称</p>
+      <p><code>%机器人QQ%</code> 机器人QQ号</p>
+      <p><code>%机器人身份%</code> 机器人在本群身份</p>
+      <p><code>%消息ID%</code>/<code>%Msgbar%</code>/<code>%newMsgID%</code> 消息ID</p>
+      <p><code>%场景%</code>/<code>%ChatType%</code> 消息场景（group/direct/channel）</p>
+      <p><code>%会话ID%</code>/<code>%ChatId%</code> 当前会话ID</p>
+      <p><code>%是否艾特机器人%</code> 1/0</p>
+      <p><code>%AT数量%</code>/<code>%图片数量%</code> @人数/图片数</p>
+      <p><code>%消息时间%</code>/<code>%时间戳%</code> 消息时间戳</p>
+      <p><code>%事件类型%</code> 如 GROUP_MESSAGE_CREATE</p>
+      <p><code>%引用ID%</code>/<code>%REFIDX%</code> 可引用标识</p>
+      <p><code>%消息来源%</code> message_scene.source</p>
       <div class="copy-block">我的信息
 你好 %昵称%！
 你的ID：%ID%
@@ -285,6 +309,7 @@ $撤回$
 ±自动撤回=10±这条消息 10 秒后自动消失</div>
       <h4>主动消息 / 召回 / 成员查询 / 邀请链接</h4>
       <p><code>$主动私聊 ID 内容$</code> / <code>$主动群发 群ID 内容$</code> 主动发送；<code>$召回 ID 内容$</code> / <code>$强制召回 ID 内容$</code> 召回消息；<code>$群成员 ID$</code> / <code>$机器人成员$</code> 返回成员 JSON；<code>$邀请链接$</code> 生成专属邀请链接。</p>
+      <p style="color:#e67e22">注意：成员查询仅限群聊；查自己时接口失败会自动降级用消息自带的数据；<code>$机器人成员$</code> 需机器人被@过一次后才能查到；这些函数在沙盒测试中不可用，需真实消息环境。失败时回复会附 ⚠ 原因。</p>
       <div class="copy-block">查我
 M:$群成员 %ID%$
 群昵称：@%M% [username]
@@ -343,7 +368,9 @@ R:$访问 https://api.github.com/repos/ElainaCore/ElainaBot_v2$
 仓库：@%R% [full_name]\n
 星标：@%R% [stargazers_count]</div>
       <h4>内置示例词库</h4>
-      <p>插件自带 <code>dicts/变量示例.txt</code>：对机器人直接发 <b>示例菜单</b>，即可逐项体验全部变量与功能，也是词库开发的实践模板。</p>
+      <p>插件自带 <code>dicts/变量示例.txt</code>：对机器人直接发 <b>示例菜单</b>（分两页，发 <b>示例菜单2</b> 看第二页），即可逐项体验全部变量与功能，也是词库开发的实践模板。</p>
+      <h4>词库文件开关</h4>
+      <p>左侧文件列表每个词库名右侧有启用开关：关闭后该文件不参与触发（仍可编辑），打开即时生效。</p>
       <h4>综合例子：签到（可直接复制使用）</h4>
       <div class="copy-block">签到
 如果:$读 签到 %ID% 0$==%时间MMdd%
@@ -432,8 +459,19 @@ async function loadDicts() {
   list.innerHTML = '';
   (r.dicts || []).forEach(d => {
     const div = document.createElement('div');
-    div.className = 'dict-item' + (d.name === curDict ? ' active' : '');
-    div.innerHTML = `<span>${esc(d.name)}</span><small>${d.lines}行</small>`;
+    const on = d.enabled !== false;
+    div.className = 'dict-item' + (d.name === curDict ? ' active' : '') + (on ? '' : ' disabled');
+    div.innerHTML = `<span class="dname">${esc(d.name)}</span><small>${d.lines}行</small>`;
+    const sw = document.createElement('div');
+    sw.className = 'dict-switch' + (on ? ' on' : '');
+    sw.title = on ? '点击禁用（禁用后不参与触发）' : '点击启用';
+    sw.onclick = async (e) => {
+      e.stopPropagation();
+      const r2 = await api('dict/toggle', { name: d.name, enabled: !on });
+      if (r2.success) { toast(r2.message); loadDicts(); }
+      else toast(r2.message || '操作失败', false);
+    };
+    div.appendChild(sw);
     div.onclick = () => openDict(d.name);
     list.appendChild(div);
   });
