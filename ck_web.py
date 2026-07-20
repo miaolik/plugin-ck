@@ -138,6 +138,7 @@ async def api_test(request):
         channel_id=str(body.get("channel_id", "") or ""),
         message_id="TEST_MSG",
         appid="TEST_BOT",
+        chat_type="group",
     )
     matched = await engine.handle(ctx)
     return web.json_response({

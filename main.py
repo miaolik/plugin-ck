@@ -16,10 +16,50 @@ from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
 
 __plugin_meta__ = {
     "name": "词库",
-    "description": "GQ 风格词库引擎：变量/正则/如果判断/读写数据/排行榜/数据库/访问URL/多消息类型，含 Web 词库编辑器",
-    "version": "1.0.0",
+    "description": "GQ 风格词库引擎：变量/正则/如果判断/循环遍历/读写数据/排行榜/数据库/访问URL/按钮/引用/撤回/多消息类型，含 Web 词库编辑器",
+    "version": "1.1.0",
     "author": "miaolik",
 }
+
+
+def _get_bot(appid):
+    from core.bot.manager import _bot_manager_ref
+    if not _bot_manager_ref:
+        return None
+    try:
+        return _bot_manager_ref.get_bot(appid)
+    except Exception:
+        return None
+
+
+_BOT_ROLE_CACHE: dict = {}  # (appid, group_id) -> (role, expire_ts)
+_BOT_ROLE_TTL = 300
+
+
+async def _bot_role(event) -> str:
+    """机器人在本群的真实身份（owner/admin/member）。
+
+    优先用 mentions 里解析出的 bot_member_role（被@时才有），否则调用
+    get_bot_member 查询并按群缓存，避免每条消息都打接口。
+    """
+    if not getattr(event, "is_group", False) or not event.group_id:
+        return ""
+    if getattr(event, "bot_member_role", ""):
+        return event.bot_member_role
+    key = (event.appid, event.group_id)
+    cached = _BOT_ROLE_CACHE.get(key)
+    now = time.time()
+    if cached and cached[1] > now:
+        return cached[0]
+    role = ""
+    try:
+        member = await event.sender.get_bot_member(event.group_id)
+        if isinstance(member, dict):
+            role = member.get("member_role", "") or ""
+    except Exception:
+        role = ""
+    _BOT_ROLE_CACHE[key] = (role, now + _BOT_ROLE_TTL)
+    return role
 
 
 def _event_images(event) -> list:
@@ -82,14 +122,14 @@ def _avatar_url(event) -> str:
     return ""
 
 
-def _event_extras(event) -> dict:
+def _event_extras(event, bot_role: str = "") -> dict:
     """框架 SDK 提供的补充变量（中英文名映射）。"""
     chat_id = getattr(event, "chat_id", "") or ""
     timestamp = str(getattr(event, "timestamp", "") or "")
     event_type = getattr(event, "event_type", "") or ""
     ref_id = getattr(event, "message_reference_id", "") or ""
     at_self = "1" if getattr(event, "is_at_self", False) else "0"
-    bot_role = getattr(event, "bot_member_role", "") or ""
+    bot_role = bot_role or getattr(event, "bot_member_role", "") or ""
     scene_source = (getattr(event, "message_scene", None) or {}).get("source", "") or ""
     return {
         "会话ID": chat_id, "ChatId": chat_id,
@@ -102,7 +142,7 @@ def _event_extras(event) -> dict:
     }
 
 
-def build_ctx(event) -> Ctx:
+def build_ctx(event, bot_role: str = "") -> Ctx:
     async def send(outputs, md_mode):
         await send_outputs(event, outputs, md_mode)
 
@@ -111,6 +151,7 @@ def build_ctx(event) -> Ctx:
             return await event.recall(message_id=message_id)
         return await event.recall()
 
+    bot = _get_bot(event.appid)
     return Ctx(
         message=_clean_message(event),
         user_id=event.user_id or "",
@@ -120,15 +161,17 @@ def build_ctx(event) -> Ctx:
         channel_id=event.channel_id or "",
         message_id=event.message_id or _event_get(event, "d/id"),
         appid=event.appid or "",
-        robot_name=getattr(getattr(event, "sender", None), "_bot_name", "") or "",
+        robot_name=(getattr(bot, "name", "") or "") if bot else
+                   (getattr(getattr(event, "sender", None), "_bot_name", "") or ""),
         avatar=_avatar_url(event),
         role=getattr(event, "member_role", "") or _event_get(event, "d/author/member_role"),
         ats=_event_ats(event),
         images=_event_images(event),
         chat_type=getattr(event, "chat_type", "") or "",
-        robot_qq=str(getattr(getattr(event, "sender", None), "_bot_qq", "") or ""),
+        robot_qq=str((getattr(bot, "robot_qq", "") or "") if bot else "")
+                 or str(getattr(getattr(event, "sender", None), "_bot_qq", "") or ""),
         raw_json=_event_raw_json(event),
-        extras=_event_extras(event),
+        extras=_event_extras(event, bot_role),
         send=send,
         recall=recall,
     )
@@ -230,7 +273,9 @@ async def send_outputs(event, outputs, md_mode) -> None:
                 if quote_ref:
                     kwargs["message_reference_id"] = quote_ref
                     quote_ref = ""
-                await event.reply(content, msg_type=2 if md_mode else None, **kwargs)
+                # QQ 开放平台要求键盘按钮必须挂在原生 Markdown 消息上
+                msg_type = 2 if (md_mode or kwargs.get("buttons")) else None
+                await event.reply(content, msg_type=msg_type, **kwargs)
         elif kind in ("image", "video", "voice", "file") and content:
             await _send_media(event, kind, content)
         elif kind == "ark" and content:
@@ -242,6 +287,8 @@ async def send_outputs(event, outputs, md_mode) -> None:
             kwargs["buttons"] = buttons
         if quote_ref:
             kwargs["message_reference_id"] = quote_ref
+        if kwargs.get("buttons"):
+            kwargs["msg_type"] = 2
         await event.reply(" ", **kwargs)
 
 
@@ -271,10 +318,12 @@ async def _send_ark(event, spec: str) -> None:
                       "C2C_MESSAGE_CREATE", "AT_MESSAGE_CREATE",
                       "DIRECT_MESSAGE_CREATE", "MESSAGE_CREATE"])
 async def ck_dispatch(event, match):
-    message = (event.content or "").strip()
+    message = _clean_message(event)
     if not message:
         return
-    ctx = build_ctx(event)
+    # 仅在确有词库块命中时才查机器人身份，避免每条群消息都打接口
+    bot_role = await _bot_role(event) if engine.find_block(message) else ""
+    ctx = build_ctx(event, bot_role)
     matched = await engine.handle(ctx)
     if not matched:
         return
