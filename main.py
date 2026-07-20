@@ -197,6 +197,12 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         role = getattr(event, "bot_member_role", "") or ""
         return {"member_role": role} if role else None
 
+    async def open_api(method, path, payload):
+        kwargs = {}
+        if payload is not None:
+            kwargs["json"] = payload
+        return await event.sender._request(method, path, **kwargs)
+
     actions = {
         "主动私聊": send_to_user,
         "主动群发": send_to_group,
@@ -205,6 +211,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         "邀请链接": share_link,
         "群成员": group_member,
         "机器人成员": bot_member,
+        "官方API": open_api,
     }
 
     bot = _get_bot(event.appid)
