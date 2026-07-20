@@ -1087,7 +1087,7 @@ class CKEngine:
             uid = rest.strip() or ctx.user_id
             member = await action(uid)
             if not member:
-                raise CKError("$群成员$ 查询失败（需在群聊中使用，且目标ID为本群成员）")
+                raise CKError("$群成员$ 查询失败（需在群聊中使用；查他人需对方在本群发过言）")
             return json.dumps(member, ensure_ascii=False)
         if name == "机器人成员":
             action = ctx.actions.get(name)
@@ -1095,7 +1095,7 @@ class CKEngine:
                 raise CKError("$机器人成员$ 当前环境不支持")
             member = await action()
             if not member:
-                raise CKError("$机器人成员$ 查询失败（需在群聊中使用）")
+                raise CKError("$机器人成员$ 查询失败（需在群聊中@过机器人一次后可用）")
             return json.dumps(member, ensure_ascii=False)
         if name == "官方API":
             action = ctx.actions.get(name)

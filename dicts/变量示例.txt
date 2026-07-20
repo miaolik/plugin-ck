@@ -267,7 +267,6 @@ M:$群成员 %ID%$
 B:$机器人成员$
 你的群昵称：@%M% [username]\n
 你的身份：@%M% [member_role]\n
-入群时间：@%M% [joined_at]\n
 机器人身份：@%B% [member_role]
 
 // $官方API 方法 /路径 JSON体$ 用框架凭证直调 QQ 开放平台接口（方法 GET/POST/PUT/PATCH/DELETE，JSON体可省）

@@ -35,6 +35,76 @@ def _get_bot(appid):
 _BOT_ROLE_CACHE: dict = {}  # (appid, group_id) -> (role, expire_ts)
 _BOT_ROLE_TTL = 300
 
+# 群成员信息缓存（平台未开放群成员查询接口，从消息体 author 里积累）
+_MEMBERS_FILE = DATA_DIR / "members.json"
+_members_cache: dict = {}  # group_id -> {user_id: {username, member_role, first_seen, last_seen}}
+_members_dirty = False
+_members_last_save = 0.0
+_MEMBERS_SAVE_INTERVAL = 30
+
+
+def _members_load() -> None:
+    global _members_cache
+    if _MEMBERS_FILE.exists():
+        try:
+            data = json.loads(_MEMBERS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                _members_cache = data
+        except (json.JSONDecodeError, OSError):
+            _members_cache = {}
+
+
+def _members_save(force: bool = False) -> None:
+    global _members_dirty, _members_last_save
+    now = time.time()
+    if not _members_dirty or (not force and now - _members_last_save < _MEMBERS_SAVE_INTERVAL):
+        return
+    try:
+        _MEMBERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _MEMBERS_FILE.write_text(json.dumps(_members_cache, ensure_ascii=False), encoding="utf-8")
+        _members_dirty = False
+        _members_last_save = now
+    except OSError:
+        pass
+
+
+def _members_record(event) -> None:
+    """从群消息体 author 里记录发言人的昵称/身份；同时持久化机器人身份。"""
+    global _members_dirty
+    gid = event.group_id or ""
+    if not gid:
+        return
+    author = ((getattr(event, "raw", None) or {}).get("d") or {}).get("author") or {}
+    uid = event.user_id or ""
+    if uid and isinstance(author, dict) and (author.get("username") or author.get("member_role")):
+        grp = _members_cache.setdefault(gid, {})
+        rec = grp.setdefault(uid, {"first_seen": int(time.time())})
+        if author.get("username"):
+            rec["username"] = author["username"]
+        if author.get("member_role"):
+            rec["member_role"] = author["member_role"]
+        rec["last_seen"] = int(time.time())
+        _members_dirty = True
+    bot_role = getattr(event, "bot_member_role", "") or ""
+    if bot_role:
+        grp = _members_cache.setdefault(gid, {})
+        if grp.get("__bot__", {}).get("member_role") != bot_role:
+            grp["__bot__"] = {"member_role": bot_role, "last_seen": int(time.time())}
+            _members_dirty = True
+    _members_save()
+
+
+def _members_get(gid: str, uid: str):
+    rec = (_members_cache.get(gid) or {}).get(uid)
+    if isinstance(rec, dict) and rec:
+        out = dict(rec)
+        out.setdefault("member_openid", uid)
+        return out
+    return None
+
+
+_members_load()
+
 
 async def _bot_role(event) -> str:
     """机器人在本群的真实身份（owner/admin/member）。
@@ -52,12 +122,16 @@ async def _bot_role(event) -> str:
     if cached and cached[1] > now:
         return cached[0]
     role = ""
-    try:
-        member = await event.sender.get_bot_member(event.group_id)
-        if isinstance(member, dict):
-            role = member.get("member_role", "") or ""
-    except Exception:
-        role = ""
+    persisted = _members_get(event.group_id, "__bot__")
+    if persisted:
+        role = persisted.get("member_role", "") or ""
+    if not role:
+        try:
+            member = await event.sender.get_bot_member(event.group_id)
+            if isinstance(member, dict):
+                role = member.get("member_role", "") or ""
+        except Exception:
+            role = ""
     _BOT_ROLE_CACHE[key] = (role, now + _BOT_ROLE_TTL)
     return role
 
@@ -169,33 +243,42 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
     async def group_member(uid):
         if not event.group_id:
             return None
-        member = await event.sender.get_group_member(event.group_id, uid)
+        # 平台未开放群成员查询接口，以消息体/本地缓存为主，接口作为尝试项
+        if uid == (event.user_id or ""):
+            author = ((getattr(event, "raw", None) or {}).get("d") or {}).get("author") or {}
+            if isinstance(author, dict) and (author.get("username") or author.get("member_role")):
+                out = dict(author)
+                out.setdefault("member_openid", uid)
+                return out
+        cached = _members_get(event.group_id, uid)
+        if cached:
+            return cached
+        try:
+            member = await event.sender.get_group_member(event.group_id, uid)
+        except Exception:
+            member = None
         if member:
             return member
-        # 查自己时接口失败可降级用消息自带的 author 数据
-        if uid == (event.user_id or ""):
-            author = (getattr(event, "raw", None) or {}).get("d", {}).get("author", {})
-            if isinstance(author, dict) and author:
-                return author
-            fallback = {}
-            if event.username:
-                fallback["username"] = event.username
-            if getattr(event, "member_role", ""):
-                fallback["member_role"] = event.member_role
-            if fallback:
-                fallback["member_openid"] = uid
-                return fallback
+        if uid == (event.user_id or "") and event.username:
+            return {"member_openid": uid, "username": event.username,
+                    "member_role": getattr(event, "member_role", "") or ""}
         return None
 
     async def bot_member():
         if not event.group_id:
             return None
-        member = await event.sender.get_bot_member(event.group_id)
-        if member:
-            return member
-        # 降级：被@时 mentions 解析出的机器人身份
+        # 消息体 mentions 里的机器人身份最准，其次本地持久缓存，最后尝试接口
         role = getattr(event, "bot_member_role", "") or ""
-        return {"member_role": role} if role else None
+        if role:
+            return {"member_role": role}
+        cached = _members_get(event.group_id, "__bot__")
+        if cached:
+            return cached
+        try:
+            member = await event.sender.get_bot_member(event.group_id)
+        except Exception:
+            member = None
+        return member or None
 
     async def open_api(method, path, payload):
         kwargs = {}
@@ -407,6 +490,8 @@ async def _send_ark(event, spec: str) -> None:
                       "C2C_MESSAGE_CREATE", "AT_MESSAGE_CREATE",
                       "DIRECT_MESSAGE_CREATE", "MESSAGE_CREATE"])
 async def ck_dispatch(event, match):
+    if getattr(event, "is_group", False):
+        _members_record(event)
     message = _clean_message(event)
     if not message:
         return
