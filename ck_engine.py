@@ -1063,13 +1063,17 @@ class CKEngine:
                 raise CKError("$群成员$ 当前环境不支持")
             uid = rest.strip() or ctx.user_id
             member = await action(uid)
-            return json.dumps(member or {}, ensure_ascii=False)
+            if not member:
+                raise CKError("$群成员$ 查询失败（需在群聊中使用，且目标ID为本群成员）")
+            return json.dumps(member, ensure_ascii=False)
         if name == "机器人成员":
             action = ctx.actions.get(name)
             if not action:
                 raise CKError("$机器人成员$ 当前环境不支持")
             member = await action()
-            return json.dumps(member or {}, ensure_ascii=False)
+            if not member:
+                raise CKError("$机器人成员$ 查询失败（需在群聊中使用）")
+            return json.dumps(member, ensure_ascii=False)
 
         raise CKError(f"未知函数: ${name}$")
 
