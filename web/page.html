@@ -50,32 +50,46 @@
   #toast.err { background: #e74c3c; }
   .status-line { padding: 6px 14px; font-size: 12px; color: #747d8c; background: #fff; border-top: 1px solid #e4e7ee; }
   .errbox { color: #e74c3c; font-size: 12px; white-space: pre-wrap; }
-  #panel-toggle { display: none; }
-  /* 手机端：上下堆叠布局，词库列表横向滑动，右侧面板可折叠 */
-  @media (max-width: 768px) {
+  .m-only { display: none; }
+  .panel-close { display: none; }
+  /* 弹窗（替代 prompt/confirm，手机 WebView 内原生对话框常被拦截） */
+  .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 100; display: none; align-items: center; justify-content: center; }
+  .modal-mask.show { display: flex; }
+  .modal { background: #fff; border-radius: 10px; padding: 16px; width: min(320px, 90vw); box-shadow: 0 8px 30px rgba(0,0,0,.2); }
+  .modal h3 { font-size: 14px; margin-bottom: 10px; }
+  .modal input { width: 100%; border: 1px solid #d5d9e2; border-radius: 6px; padding: 8px 10px; font-size: 14px; margin-bottom: 12px; }
+  .modal .btns { display: flex; gap: 8px; justify-content: flex-end; }
+  @media (max-width: 860px) {
+    .m-only { display: inline-block; }
     .layout { flex-direction: column; height: 100dvh; }
-    .sidebar { width: 100%; max-height: none; border-right: none; border-bottom: 1px solid #e4e7ee; flex: 0 0 auto; }
-    .sidebar h2 { display: none; }
-    .dict-list { display: flex; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
-    .dict-item { flex: 0 0 auto; gap: 6px; border-left: none; border-bottom: 3px solid transparent; padding: 8px 12px; }
-    .dict-item.active { border-left-color: transparent; border-bottom-color: #5352ed; }
-    .sidebar-btns { border-top: none; padding: 6px 10px; }
+    .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 80vw); z-index: 60;
+               transform: translateX(-100%); transition: transform .2s; box-shadow: 2px 0 12px rgba(0,0,0,.15); }
+    .sidebar.open { transform: translateX(0); }
     .main { flex: 1; min-height: 0; }
+    #editor { font-size: 16px; -webkit-text-size-adjust: 100%; }
+    .rightbar { position: fixed; inset: 0; width: 100%; z-index: 60; display: none; }
+    .rightbar.open { display: flex; }
+    .panel-close { display: block; padding: 10px; text-align: center; background: #5352ed; color: #fff; cursor: pointer; font-weight: 700; }
     .toolbar { padding: 8px 10px; gap: 6px; }
-    #editor { min-height: 38vh; font-size: 16px; }
-    .rightbar { width: 100%; border-left: none; border-top: 1px solid #e4e7ee; flex: 0 0 auto; max-height: 50vh; }
-    .rightbar.collapsed .tab-body { display: none; }
-    .rightbar.collapsed { max-height: none; }
-    #panel-toggle { display: inline-block; }
-    input[type=text], textarea.small { font-size: 16px; }
-    .status-line { display: none; }
+    .toolbar .title { font-size: 13px; }
   }
 </style>
 </head>
 <body>
 <div id="toast"></div>
+<div class="modal-mask" id="modal">
+  <div class="modal">
+    <h3 id="modal-title"></h3>
+    <input type="text" id="modal-input">
+    <div class="btns">
+      <button onclick="modalDone(false)">取消</button>
+      <button class="primary" onclick="modalDone(true)">确定</button>
+    </div>
+  </div>
+</div>
 <div class="layout">
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
+    <div class="panel-close" onclick="toggleSidebar()">✕ 关闭</div>
     <h2>📚 词库文件</h2>
     <div class="dict-list" id="dict-list"></div>
     <div class="sidebar-btns">
@@ -87,10 +101,11 @@
   </div>
   <div class="main">
     <div class="toolbar">
+      <button class="m-only" onclick="toggleSidebar()">📚 文件</button>
       <span class="title" id="cur-name">未选择词库</span>
       <span id="blk-count" style="color:#a4b0be;font-size:12px"></span>
-      <button class="primary" onclick="saveDict()">💾 保存并重载 (Ctrl+S)</button>
-      <button id="panel-toggle" onclick="togglePanel()">面板</button>
+      <button class="m-only" onclick="toggleRightbar()">🧪 面板</button>
+      <button class="primary" onclick="saveDict()">💾 保存</button>
     </div>
     <div class="editor-wrap">
       <textarea id="editor" spellcheck="false" placeholder="选择或新建一个词库文件开始编写…
@@ -111,6 +126,7 @@ $写 签到 %ID% %时间MMdd%$"></textarea>
     <div class="status-line" id="status-line"></div>
   </div>
   <div class="rightbar" id="rightbar">
+    <div class="panel-close" onclick="toggleRightbar()">✕ 关闭面板，返回编辑</div>
     <div class="tabs">
       <div class="active" onclick="tab(0,this)">测试</div>
       <div onclick="tab(1,this)">语法</div>
@@ -159,8 +175,11 @@ i:[%i%+1]
       <p>条件支持 <code>==</code> <code>!=</code> <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code>；<code>[算式]</code> 支持 + - * / % 和括号。</p>
       <p><code>循环遍历:数据 项变量 序变量</code>（单字符变量名，序变量可省）遍历 JSON 数组/对象（序=键）/逗号文本；循环内 <code>跳出</code>=break、<code>继续</code>=continue。</p>
       <h4>发送消息</h4>
-      <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
-      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调）；<code>\n</code> 或 <code>\r</code> 为换行。</p>
+      <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±文本±</span><span class="snip">±无后缀±</span><span class="snip">±自动撤回=10±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
+      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±文本±</code> 强制纯文本（markdown 语法原样显示）；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 本次发出的消息 N 秒后自动撤回；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调），<code>±小按钮=...±</code> 同语法但字号更小；<code>\n</code> 或 <code>\r</code> 为换行。</p>
+      <h4>主动消息 / 召回 / 成员 / 邀请链接</h4>
+      <span class="snip">$主动私聊 %ID% 内容$</span><span class="snip">$主动群发 %群ID% 内容$</span><span class="snip">$召回 %ID% 内容$</span><span class="snip">$强制召回 %ID% 内容$</span><span class="snip">$群成员 %ID%$</span><span class="snip">$机器人成员$</span><span class="snip">$邀请链接$</span>
+      <p><code>$主动私聊/主动群发$</code> 不回复当前消息而直接向目标发送（配合 <code>$调用 毫秒 指令$</code> 可延迟发送）；<code>$群成员 ID$</code>/<code>$机器人成员$</code> 返回成员 JSON，用 <code>@%变% [字段]</code> 取值；<code>$邀请链接 可选数据$</code> 生成专属邀请链接。以上仅真实消息环境可用，Web 沙盒测试会提示不支持。</p>
       <h4>文本处理</h4>
       <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
       <h4>随机</h4>
@@ -260,6 +279,22 @@ AT数量：%AT数量%　图片数量：%图片数量%
       <div class="copy-block">撤回测试
 $撤回$
 已撤回你刚才的消息</div>
+      <h4>消息类型 / 自动撤回 / 小按钮</h4>
+      <p><code>±文本±</code> 强制纯文本；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 发出的消息 N 秒后自动撤回；<code>±小按钮=...±</code> 小字号按钮（语法同 ±btn±）。</p>
+      <div class="copy-block">阅后即焚
+±自动撤回=10±这条消息 10 秒后自动消失</div>
+      <h4>主动消息 / 召回 / 成员查询 / 邀请链接</h4>
+      <p><code>$主动私聊 ID 内容$</code> / <code>$主动群发 群ID 内容$</code> 主动发送；<code>$召回 ID 内容$</code> / <code>$强制召回 ID 内容$</code> 召回消息；<code>$群成员 ID$</code> / <code>$机器人成员$</code> 返回成员 JSON；<code>$邀请链接$</code> 生成专属邀请链接。</p>
+      <div class="copy-block">查我
+M:$群成员 %ID%$
+群昵称：@%M% [username]
+身份：@%M% [member_role]</div>
+      <div class="copy-block">定时推送
+$调用 5000 推送内部$
+5秒后主动推送
+
+[内部]推送内部
+$主动群发 %群ID% ⏰ 时间到了$</div>
       <h4>局部变量</h4>
       <p>格式 <code>变:值</code>（变量名一个字符，第二个字符是冒号，仅当前语句块有效），使用 <code>%变%</code>。</p>
       <div class="copy-block">算钱
@@ -334,6 +369,40 @@ const TOKEN = new URLSearchParams(window.location.search).get('token') || '';
 let curDict = '';
 let dirty = false;
 
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+function toggleRightbar() { document.getElementById('rightbar').classList.toggle('open'); }
+
+// 弹窗式 prompt/confirm（手机 WebView/iframe 内原生对话框常被拦截导致新建/删除失效）
+let _modalResolve = null;
+function askText(title, value = '') {
+  return new Promise(resolve => {
+    _modalResolve = resolve;
+    document.getElementById('modal-title').textContent = title;
+    const inp = document.getElementById('modal-input');
+    inp.style.display = ''; inp.value = value;
+    document.getElementById('modal').classList.add('show');
+    setTimeout(() => inp.focus(), 50);
+  });
+}
+function askConfirm(title) {
+  return new Promise(resolve => {
+    _modalResolve = ok => resolve(!!ok && '1');
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-input').style.display = 'none';
+    document.getElementById('modal').classList.add('show');
+  });
+}
+function modalDone(ok) {
+  document.getElementById('modal').classList.remove('show');
+  const v = document.getElementById('modal-input').value;
+  const r = _modalResolve; _modalResolve = null;
+  if (r) r(ok ? (v || '1') : null);
+}
+document.getElementById('modal-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') modalDone(true);
+  if (e.key === 'Escape') modalDone(false);
+});
+
 async function api(path, body, method) {
   const url = `/api/ext/ck/${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(TOKEN)}`;
   const opts = { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json' } };
@@ -352,16 +421,9 @@ function tab(i, el) {
   document.querySelectorAll('.tab-body').forEach(d => d.classList.remove('active'));
   el.classList.add('active');
   document.getElementById('tab-' + i).classList.add('active');
-  document.getElementById('rightbar').classList.remove('collapsed');
   if (i === 2) loadGlobals();
   if (i === 3) loadData();
   if (i === 5) loadSettings();
-}
-function togglePanel() {
-  document.getElementById('rightbar').classList.toggle('collapsed');
-}
-if (window.matchMedia('(max-width: 768px)').matches) {
-  document.getElementById('rightbar').classList.add('collapsed');
 }
 
 async function loadDicts() {
@@ -381,12 +443,13 @@ async function loadDicts() {
     ? `<span class="errbox">⚠ ${errs.map(esc).join('　|　')}</span>` : '词库加载正常';
 }
 async function openDict(name) {
-  if (dirty && !confirm('当前词库有未保存修改，放弃并切换？')) return;
+  if (dirty && !await askConfirm('当前词库有未保存修改，放弃并切换？')) return;
   const r = await api('dict?name=' + encodeURIComponent(name));
   if (!r.success) return toast(r.message, false);
   curDict = name; dirty = false;
   document.getElementById('editor').value = r.content;
   document.getElementById('cur-name').textContent = name + '.txt';
+  document.getElementById('sidebar').classList.remove('open');
   loadDicts();
 }
 async function saveDict() {
@@ -396,7 +459,7 @@ async function saveDict() {
   if (r.success) { dirty = false; loadDicts(); }
 }
 async function newDict() {
-  const name = prompt('新词库名（不含 .txt）：');
+  const name = await askText('新词库名（不含 .txt）：');
   if (!name) return;
   const r = await api('dict/save', { name: name.trim(), content: '' });
   if (!r.success) return toast(r.message, false);
@@ -407,7 +470,7 @@ async function newDict() {
 }
 async function renameDict() {
   if (!curDict) return toast('请先选择词库', false);
-  const name = prompt('新名称：', curDict);
+  const name = await askText('新名称：', curDict);
   if (!name || name === curDict) return;
   const r = await api('dict/rename', { name: curDict, new_name: name.trim() });
   toast(r.message || '完成', r.success);
@@ -415,7 +478,7 @@ async function renameDict() {
 }
 async function deleteDict() {
   if (!curDict) return toast('请先选择词库', false);
-  if (!confirm(`确认删除词库 ${curDict}.txt ？`)) return;
+  if (!await askConfirm(`确认删除词库 ${curDict}.txt ？`)) return;
   const r = await api('dict/delete', { name: curDict });
   toast(r.message || '完成', r.success);
   if (r.success) { curDict = ''; document.getElementById('editor').value = ''; document.getElementById('cur-name').textContent = '未选择词库'; loadDicts(); }
@@ -488,7 +551,7 @@ async function loadData() {
       view.textContent = r2.success ? r2.content : (r2.message || '无法预览');
     };
     tr.querySelector('button').onclick = async () => {
-      if (!confirm(`删除数据文件 ${f.path} ？`)) return;
+      if (!await askConfirm(`删除数据文件 ${f.path} ？`)) return;
       await api('data/delete', { path: f.path });
       loadData();
     };
