@@ -90,7 +90,7 @@ def _event_extras(event) -> dict:
     ref_id = getattr(event, "message_reference_id", "") or ""
     at_self = "1" if getattr(event, "is_at_self", False) else "0"
     bot_role = getattr(event, "bot_member_role", "") or ""
-    scene_source = getattr(event, "scene_source", "") or ""
+    scene_source = (getattr(event, "message_scene", None) or {}).get("source", "") or ""
     return {
         "会话ID": chat_id, "ChatId": chat_id,
         "消息时间": timestamp, "时间戳": timestamp,
