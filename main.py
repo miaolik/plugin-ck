@@ -16,8 +16,8 @@ from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
 
 __plugin_meta__ = {
     "name": "词库",
-    "description": "GQ 风格词库引擎：变量/正则/如果判断/循环遍历/读写数据/排行榜/数据库/访问URL/按钮/引用/撤回/多消息类型，含 Web 词库编辑器",
-    "version": "1.1.0",
+    "description": "GQ 风格词库引擎：变量/正则/如果判断/循环遍历/读写数据/排行榜/数据库/访问URL/按钮/引用/撤回/主动消息/多消息类型，含 Web 词库编辑器",
+    "version": "1.2.0",
     "author": "miaolik",
 }
 
@@ -143,13 +143,48 @@ def _event_extras(event, bot_role: str = "") -> dict:
 
 
 def build_ctx(event, bot_role: str = "") -> Ctx:
-    async def send(outputs, md_mode):
-        await send_outputs(event, outputs, md_mode)
+    async def send(ctx):
+        await send_ctx(event, ctx)
 
     async def recall(message_id: str = ""):
         if message_id:
             return await event.recall(message_id=message_id)
         return await event.recall()
+
+    async def send_to_user(uid, content):
+        await event.send_to_user(uid, content)
+
+    async def send_to_group(gid, content):
+        await event.send_to_group(gid, content)
+
+    async def wakeup(uid, content):
+        await event.send_wakeup(uid, content)
+
+    async def force_wakeup(uid, content):
+        await event.sender.force_wakeup(uid, content)
+
+    async def share_link(data):
+        return await event.sender.get_share_link(data)
+
+    async def group_member(uid):
+        if not event.group_id:
+            return None
+        return await event.sender.get_group_member(event.group_id, uid)
+
+    async def bot_member():
+        if not event.group_id:
+            return None
+        return await event.sender.get_bot_member(event.group_id)
+
+    actions = {
+        "主动私聊": send_to_user,
+        "主动群发": send_to_group,
+        "召回": wakeup,
+        "强制召回": force_wakeup,
+        "邀请链接": share_link,
+        "群成员": group_member,
+        "机器人成员": bot_member,
+    }
 
     bot = _get_bot(event.appid)
     return Ctx(
@@ -174,6 +209,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         extras=_event_extras(event, bot_role),
         send=send,
         recall=recall,
+        actions=actions,
     )
 
 
@@ -228,10 +264,11 @@ async def _send_media(event, kind: str, content: str) -> None:
         await reply(data)
 
 
-def _parse_buttons(spec: str) -> list:
+def _parse_buttons(spec: str, small: bool = False):
     """±btn=文本;值|文本;值^下一行± → 框架按钮结构。
 
-    值为 URL → 链接按钮；以 / 开头 → 填充输入框(type=2)；其余 → 回调(type=1)。省略值时用文本。"""
+    值为 URL → 链接按钮；以 / 开头 → 填充输入框(type=2)；其余 → 回调(type=1)。省略值时用文本。
+    small=True 时返回小字号键盘（font_size=small）。"""
     rows = []
     for row in spec.split("^"):
         btns = []
@@ -249,18 +286,31 @@ def _parse_buttons(spec: str) -> list:
                 btns.append({"text": text, "data": value, "type": 1})
         if btns:
             rows.append(btns)
-    return rows
+    if not rows:
+        return []
+    return {"rows": rows, "font_size": "small"} if small else rows
 
 
-async def send_outputs(event, outputs, md_mode) -> None:
+async def send_outputs(event, outputs, md_mode, *, text_mode=False,
+                       skip_suffix=False, auto_delete=0) -> None:
     """按片段顺序发送：文本合并成一条，媒体分条发送；按钮/引用附加到首条文本。"""
     buttons = None
+    small_rows = None
     quote_ref = ""
     for seg in outputs:
         if seg["type"] == "buttons" and seg.get("content"):
-            buttons = _parse_buttons(seg["content"]) or None
+            parsed = _parse_buttons(seg["content"])
+            if parsed:
+                buttons = (buttons or []) + parsed
+        elif seg["type"] == "buttons_small" and seg.get("content"):
+            parsed = _parse_buttons(seg["content"], small=True)
+            if parsed:
+                small_rows = (small_rows or []) + parsed["rows"]
         elif seg["type"] == "quote":
             quote_ref = getattr(event, "message_reference_id", "") or ""
+    if small_rows:
+        buttons = {"rows": (buttons or []) + small_rows, "font_size": "small"}
+    delete_after = auto_delete if auto_delete > 0 else None
     for seg in outputs:
         kind = seg["type"]
         content = seg.get("content", "")
@@ -274,8 +324,14 @@ async def send_outputs(event, outputs, md_mode) -> None:
                     kwargs["message_reference_id"] = quote_ref
                     quote_ref = ""
                 # QQ 开放平台要求键盘按钮必须挂在原生 Markdown 消息上
-                msg_type = 2 if (md_mode or kwargs.get("buttons")) else None
-                await event.reply(content, msg_type=msg_type, **kwargs)
+                if md_mode or kwargs.get("buttons"):
+                    msg_type = 2
+                elif text_mode:
+                    msg_type = 0
+                else:
+                    msg_type = None
+                await event.reply(content, msg_type=msg_type, skip_suffix=skip_suffix,
+                                  auto_delete_time=delete_after, **kwargs)
         elif kind in ("image", "video", "voice", "file") and content:
             await _send_media(event, kind, content)
         elif kind == "ark" and content:
@@ -285,11 +341,16 @@ async def send_outputs(event, outputs, md_mode) -> None:
         kwargs = {}
         if buttons:
             kwargs["buttons"] = buttons
+            kwargs["msg_type"] = 2
         if quote_ref:
             kwargs["message_reference_id"] = quote_ref
-        if kwargs.get("buttons"):
-            kwargs["msg_type"] = 2
-        await event.reply(" ", **kwargs)
+        await event.reply(" ", skip_suffix=skip_suffix,
+                          auto_delete_time=delete_after, **kwargs)
+
+
+async def send_ctx(event, ctx) -> None:
+    await send_outputs(event, ctx.outputs, ctx.md_mode, text_mode=ctx.text_mode,
+                       skip_suffix=ctx.skip_suffix, auto_delete=ctx.auto_delete)
 
 
 async def _send_ark(event, spec: str) -> None:
@@ -329,7 +390,7 @@ async def ck_dispatch(event, match):
         return
     if ctx.errors:
         ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
-    await send_outputs(event, ctx.outputs, ctx.md_mode)
+    await send_ctx(event, ctx)
     return True
 
 
@@ -361,7 +422,7 @@ async def ck_interaction(event, match):
         return
     if ctx.errors:
         ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
-    await send_outputs(event, ctx.outputs, ctx.md_mode)
+    await send_ctx(event, ctx)
     return True
 
 

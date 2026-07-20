@@ -445,7 +445,8 @@ class Ctx:
                  images: Optional[List[str]] = None, raw_json: str = "",
                  extras: Optional[Dict[str, str]] = None,
                  send: Optional[Callable] = None,
-                 recall: Optional[Callable] = None):
+                 recall: Optional[Callable] = None,
+                 actions: Optional[Dict[str, Callable]] = None):
         self.message = message
         self.user_id = user_id
         self.username = username
@@ -465,10 +466,14 @@ class Ctx:
         self.extras = extras or {}
         self.send = send
         self.recall = recall
+        self.actions = actions or {}
         self.vars: Dict[str, str] = {}
         self.match: Optional[re.Match] = None
         self.outputs: List[Dict[str, str]] = []
         self.md_mode = False
+        self.text_mode = False      # ±文本± 强制纯文本
+        self.skip_suffix = False    # ±无后缀± 跳过全局 markdown 后缀
+        self.auto_delete = 0        # ±自动撤回=秒± 发送后自动撤回
         self.errors: List[str] = []
 
     def out_text(self, text: str) -> None:
@@ -567,7 +572,7 @@ class CKEngine:
                   avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
                   robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
                   raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
-                  recall=ctx.recall)
+                  recall=ctx.recall, actions=ctx.actions)
         sub.match = m
         try:
             await self._run_lines(blk.lines, sub, depth + 1)
@@ -581,6 +586,9 @@ class CKEngine:
             else:
                 ctx.outputs.append(seg)
         ctx.md_mode = ctx.md_mode or sub.md_mode
+        ctx.text_mode = ctx.text_mode or sub.text_mode
+        ctx.skip_suffix = ctx.skip_suffix or sub.skip_suffix
+        ctx.auto_delete = ctx.auto_delete or sub.auto_delete
 
     # ---- 执行 ----
 
@@ -1035,6 +1043,34 @@ class CKEngine:
             await self.run_command(rest.strip(), ctx, depth, internal_only=True)
             return ""
 
+        if name in ("主动私聊", "主动群发", "召回", "强制召回"):
+            action = ctx.actions.get(name)
+            if not action:
+                raise CKError(f"${name}$ 当前环境不支持")
+            args = rest.split(" ", 1)
+            if len(args) != 2 or not args[0] or not args[1]:
+                raise CKError(f"${name}$ 格式：${name} 目标ID 内容$")
+            await action(args[0].strip(), args[1])
+            return ""
+        if name == "邀请链接":
+            action = ctx.actions.get(name)
+            if not action:
+                raise CKError("$邀请链接$ 当前环境不支持")
+            return str(await action(rest.strip() or ctx.user_id) or "")
+        if name == "群成员":
+            action = ctx.actions.get(name)
+            if not action:
+                raise CKError("$群成员$ 当前环境不支持")
+            uid = rest.strip() or ctx.user_id
+            member = await action(uid)
+            return json.dumps(member or {}, ensure_ascii=False)
+        if name == "机器人成员":
+            action = ctx.actions.get(name)
+            if not action:
+                raise CKError("$机器人成员$ 当前环境不支持")
+            member = await action()
+            return json.dumps(member or {}, ensure_ascii=False)
+
         raise CKError(f"未知函数: ${name}$")
 
     def _text_func(self, name: str, rest: str) -> str:
@@ -1186,13 +1222,13 @@ class CKEngine:
                   avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
                   robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
                   raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
-                  recall=ctx.recall)
+                  recall=ctx.recall, actions=ctx.actions)
         try:
             await self.run_command(command, sub, depth)
         except CKError:
             return
         if sub.send:
-            await sub.send(sub.outputs, sub.md_mode)
+            await sub.send(sub)
 
     # ---- 数组取值与发送语句 ----
 
@@ -1210,7 +1246,9 @@ class CKEngine:
 
         return re.sub(r"@((?:\[[^@]*?\]|\{[^@]*?\}))\s+(\[[^\s]+\])", repl, text)
 
-    _SEND_RE = re.compile(r"±(img|image|video|voice|record|file|at|emoji|ark|md|btn|按钮|引用|quote)(?:=([^±]*))?±")
+    _SEND_RE = re.compile(
+        r"±(img|image|video|voice|record|file|at|emoji|ark|md|btn|按钮|小按钮|引用|quote"
+        r"|文本|text|无后缀|自动撤回)(?:=([^±]*))?±")
 
     def _emit(self, text: str, ctx: Ctx) -> None:
         text = text.replace("\\n", "\n").replace("\\r", "\n")
@@ -1234,10 +1272,23 @@ class CKEngine:
                 ctx.out_text(f"[emoji:{value}]")
             elif kind == "md":
                 ctx.md_mode = True
+            elif kind in ("文本", "text"):
+                ctx.text_mode = True
+            elif kind == "无后缀":
+                ctx.skip_suffix = True
+            elif kind == "自动撤回":
+                try:
+                    ctx.auto_delete = max(1, int(value))
+                except ValueError:
+                    ctx.errors.append(f"±自动撤回=秒± 秒数无效: {value}")
             elif kind == "ark":
                 ctx.out("ark", value)
-            elif kind in ("btn", "按钮"):
+            elif kind == "btn":
                 ctx.out("buttons", value)
+            elif kind == "按钮":
+                ctx.out("buttons", value)
+            elif kind == "小按钮":
+                ctx.out("buttons_small", value)
             elif kind in ("引用", "quote"):
                 ctx.out("quote", "")
             pos = m.end()
