@@ -136,6 +136,25 @@ async def _bot_role(event) -> str:
     return role
 
 
+async def _fill_member_vars(event, ctx) -> None:
+    """回调等不带 author 的事件里, 补全 %昵称%/%身份%：优先本地成员缓存
+    (用户在群里发过言即有记录), 接口仅作尝试项, 失败静默。"""
+    if not getattr(event, "is_group", False) or not event.group_id:
+        return
+    if ctx.username and ctx.role:
+        return
+    uid = event.user_id or ""
+    rec = _members_get(event.group_id, uid)
+    if not rec:
+        try:
+            rec = await event.sender.get_group_member(event.group_id, uid)
+        except Exception:
+            rec = None
+    if isinstance(rec, dict):
+        ctx.username = ctx.username or rec.get("username", "") or ""
+        ctx.role = ctx.role or rec.get("member_role", "") or ""
+
+
 def _event_images(event) -> list:
     urls = []
     if event.image_url:
@@ -231,6 +250,9 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
     async def send_to_group(gid, content):
         await event.send_to_group(gid, content)
 
+    async def send_to_channel(cid, content):
+        await event.sender.send_to_channel(cid, content)
+
     async def wakeup(uid, content):
         await event.send_wakeup(uid, content)
 
@@ -289,6 +311,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
     actions = {
         "主动私聊": send_to_user,
         "主动群发": send_to_group,
+        "主动频道": send_to_channel,
         "召回": wakeup,
         "强制召回": force_wakeup,
         "邀请链接": share_link,
@@ -325,7 +348,10 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
 
 
 def _resolve_local_media(path_str: str):
-    """本地媒体路径 → 字节；依次尝试绝对路径 / 插件 data/ / 插件目录。"""
+    """本地媒体路径 → 字节；依次尝试绝对路径 / 插件 data/ / 插件目录。
+
+    Windows 反斜杠路径统一转 /（Path 在 Windows 上也接受 /），两平台通用。"""
+    path_str = path_str.strip().strip('"').strip("'").replace("\\", "/")
     candidates = []
     p = Path(path_str)
     if p.is_absolute():
@@ -562,8 +588,13 @@ async def ck_interaction(event, match):
     if len(_btn_last_click) > 10000:
         _btn_last_click.clear()
 
-    ctx = build_ctx(event)
+    # 回调事件不带 author/mentions, 昵称身份与机器人身份从本地缓存/接口补全
+    hit = engine.find_block(data) is not None
+    bot_role = await _bot_role(event) if hit else ""
+    ctx = build_ctx(event, bot_role)
     ctx.message = data
+    if hit:
+        await _fill_member_vars(event, ctx)
     matched = await engine.handle(ctx)
     if not matched:
         return
