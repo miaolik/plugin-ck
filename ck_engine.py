@@ -1130,7 +1130,7 @@ class CKEngine:
 
     # 频道管理函数：基于 QQ 频道 v1 接口，仅频道场景可用，机器人需相应权限
     _GUILD_FUNC_NAMES = ("频道撤回", "频道禁言", "频道全员禁言", "频道踢人", "频道拉黑",
-                         "身份组列表", "身份组加", "身份组减", "发帖", "删帖", "帖子列表")
+                         "身份组列表", "身份组加", "身份组减", "发帖", "删帖", "帖子列表", "帖子详情")
 
     async def _guild_func(self, name: str, rest: str, ctx: Ctx) -> str:
         """频道管理：禁言/撤回/踢人/拉黑/身份组/发帖删帖，返回 {"success":..,"data":..}。"""
@@ -1200,6 +1200,11 @@ class CKEngine:
             if args and args[0].isdigit() and len(args[0]) >= 5:
                 cid = args[0]
             method, path = "GET", f"/channels/{cid}/threads"
+        elif name == "帖子详情":
+            need(1, f"${name} 帖子ID$（可选前置子频道ID：${name} 子频道ID 帖子ID$）")
+            if len(args) >= 2 and args[0].isdigit() and len(args[0]) >= 5:
+                cid, args = args[0], args[1:]
+            method, path = "GET", f"/channels/{cid}/threads/{args[0]}"
         else:
             raise CKError(f"未知函数: ${name}$")
         ok, result = await api(method, path, payload)

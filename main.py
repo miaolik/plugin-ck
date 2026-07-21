@@ -604,6 +604,76 @@ async def ck_interaction(event, match):
     return True
 
 
+def _forum_plain_text(content) -> str:
+    """论坛富文本 content(JSON 字符串) → 纯文本；解析失败时原样返回。"""
+    if not content:
+        return ""
+    try:
+        data = json.loads(content) if isinstance(content, str) else content
+    except (ValueError, TypeError):
+        return str(content)
+    if not isinstance(data, dict):
+        return str(content)
+    parts = []
+    for para in data.get("paragraphs") or []:
+        for elem in (para or {}).get("elems") or []:
+            text = ((elem or {}).get("text") or {}).get("text", "")
+            if text:
+                parts.append(text)
+        parts.append("\n")
+    return "".join(parts).strip() or str(content)
+
+
+_FORUM_BLOCKS = {
+    "THREAD_CREATE": "发帖通知",
+    "POST_CREATE": "帖子评论通知",
+    "REPLY_CREATE": "帖子回复通知",
+}
+
+
+@handler(r"^[\s\S]*$", name="词库帖子事件", desc="论坛发帖/评论/回复事件触发词库", priority=-100,
+         event_types=["FORUM_THREAD_CREATE", "FORUM_POST_CREATE", "FORUM_REPLY_CREATE",
+                      "OPEN_FORUM_THREAD_CREATE", "OPEN_FORUM_POST_CREATE",
+                      "OPEN_FORUM_REPLY_CREATE"])
+async def ck_forum(event, match):
+    """帖子事件：有人发帖/评论帖子/回复评论时，触发词库里同名块（发帖通知/帖子评论通知/
+    帖子回复通知），块不存在则忽略。公域(OPEN_FORUM_*)事件官方不带内容，仅有人物与频道。"""
+    et = event.event_type or ""
+    block_name = next((v for k, v in _FORUM_BLOCKS.items() if et.endswith(k)), "")
+    if not block_name or engine.find_block(block_name) is None:
+        return
+    d = (getattr(event, "raw", None) or {}).get("d") or {}
+    info = d.get("thread_info") or d.get("post_info") or d.get("reply_info") or {}
+    ctx = build_ctx(event)
+    ctx.message = block_name
+    ctx.user_id = ctx.user_id or str(d.get("author_id", "") or "")
+    ctx.guild_id = ctx.guild_id or str(d.get("guild_id", "") or "")
+    ctx.channel_id = ctx.channel_id or str(d.get("channel_id", "") or "")
+    ctx.group_id = ctx.group_id or ctx.guild_id
+    ctx.chat_type = "channel"
+    ctx.extras.update({
+        "帖子ID": str(info.get("thread_id", "") or ""),
+        "评论ID": str(info.get("post_id", "") or ""),
+        "回复ID": str(info.get("reply_id", "") or ""),
+        "帖子标题": _forum_plain_text(info.get("title", "")),
+        "帖子内容": _forum_plain_text(info.get("content", "")),
+        "发布时间": str(info.get("date_time", "") or ""),
+    })
+    matched = await engine.handle(ctx)
+    if not matched:
+        return
+    if ctx.errors:
+        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+    # 帖子事件没有可回复的消息端点，文本输出改为主动发到当前子频道
+    text = "".join(o["content"] for o in ctx.outputs if o["type"] == "text").strip()
+    if text and ctx.channel_id:
+        try:
+            await event.sender.send_to_channel(ctx.channel_id, text)
+        except Exception:
+            pass
+    return True
+
+
 @on_load
 async def _init():
     engine.load()

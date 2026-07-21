@@ -186,7 +186,7 @@ i:[%i%+1]
       <span class="snip">$主动私聊 %ID% 内容$</span><span class="snip">$主动群发 %群ID% 内容$</span><span class="snip">$召回 %ID% 内容$</span><span class="snip">$强制召回 %ID% 内容$</span><span class="snip">$群成员 %ID%$</span><span class="snip">$机器人成员$</span><span class="snip">$邀请链接$</span><span class="snip">$官方API GET /路径$</span>
       <p><code>$主动私聊/主动群发$</code> 不回复当前消息而直接向目标发送（配合 <code>$调用 毫秒 指令$</code> 可延迟发送）；<code>$群成员 ID$</code>/<code>$机器人成员$</code> 返回成员 JSON，用 <code>@%变% [字段]</code> 取值；<code>$邀请链接 可选数据$</code> 生成专属邀请链接；<code>$官方API 方法 /路径 JSON体$</code> 用框架凭证直调 QQ 开放平台接口。以上仅真实消息环境可用，Web 沙盒测试会提示不支持。</p>
       <h4>频道管理（仅频道场景，机器人需相应权限）</h4>
-      <span class="snip">$主动频道 子频道ID 内容$</span><span class="snip">$频道禁言 用户ID 秒数$</span><span class="snip">$频道全员禁言 秒数$</span><span class="snip">$频道撤回 消息ID$</span><span class="snip">$频道踢人 用户ID$</span><span class="snip">$频道拉黑 用户ID$</span><span class="snip">$身份组列表$</span><span class="snip">$身份组加 用户ID 身份组ID$</span><span class="snip">$身份组减 用户ID 身份组ID$</span><span class="snip">$发帖 标题 内容$</span><span class="snip">$发帖 子频道ID md 标题 内容$</span><span class="snip">$删帖 帖子ID$</span><span class="snip">$帖子列表$</span>
+      <span class="snip">$主动频道 子频道ID 内容$</span><span class="snip">$频道禁言 用户ID 秒数$</span><span class="snip">$频道全员禁言 秒数$</span><span class="snip">$频道撤回 消息ID$</span><span class="snip">$频道踢人 用户ID$</span><span class="snip">$频道拉黑 用户ID$</span><span class="snip">$身份组列表$</span><span class="snip">$身份组加 用户ID 身份组ID$</span><span class="snip">$身份组减 用户ID 身份组ID$</span><span class="snip">$发帖 标题 内容$</span><span class="snip">$发帖 子频道ID md 标题 内容$</span><span class="snip">$删帖 帖子ID$</span><span class="snip">$帖子列表$</span><span class="snip">$帖子详情 帖子ID$</span>
       <p>禁言秒数 0=解除；发帖完整格式 <code>$发帖 [子频道ID] [文本/html/md/json] 标题 内容$</code>：子频道ID 不填默认当前子频道，格式不填默认纯文本（html=HTML 源码、md=Markdown、json=富文本 JSON）；删帖/帖子列表也可前置子频道ID（<code>$删帖 子频道ID 帖子ID$</code>）；发帖类需论坛子频道；均返回 <code>{"success":…,"data":…}</code>，用 <code>@%变% [字段]</code> 取值。示例见内置词库「示例频道」。</p>
       <h4>文本处理</h4>
       <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
@@ -318,6 +318,12 @@ $撤回$
       <div class="copy-block">发公告
 R:$发帖 md 公告标题 ## 公告内容 **支持Markdown**$
 发帖结果：@%R% [success]</div>
+      <p>帖子事件通知：建名为 <code>发帖通知</code> / <code>帖子评论通知</code> / <code>帖子回复通知</code> 的词库块，有人发帖/评论帖子/回复评论时自动触发（文本输出主动发到当前子频道）；块内可用 <code>%帖子ID%</code> <code>%评论ID%</code> <code>%回复ID%</code> <code>%帖子标题%</code> <code>%帖子内容%</code> <code>%发布时间%</code> <code>%ID%</code>（发布人）。需机器人订阅论坛事件；公域 OPEN_FORUM_* 事件官方不带内容，私域 FORUM_* 事件才有标题/内容/ID。评论列表与直接回复某条评论官方暂未开放接口，可在通知块里用 <code>$主动频道$</code> 发消息提醒。</p>
+      <div class="copy-block">帖子评论通知
+±md±## 💬 帖子新评论
+帖子：%帖子ID%
+评论人：%ID%
+内容：%帖子内容%</div>
       <div class="copy-block">查我
 M:$群成员 %ID%$
 群昵称：@%M% [username]
