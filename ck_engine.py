@@ -1049,6 +1049,10 @@ class CKEngine:
         if name == "POST访问":
             args = rest.split(" ", 1)
             return await self._http_post(args[0], args[1] if len(args) > 1 else "")
+        if name == "百度审核":
+            return await self._baidu_censor(rest.strip())
+        if name == "内容审核":
+            return await self.censor_text(rest.strip())
         if name == "下载":
             args = rest.split(" ", 1)
             if len(args) != 2:
@@ -1070,7 +1074,7 @@ class CKEngine:
             await self.run_command(rest.strip(), ctx, depth, internal_only=True)
             return ""
 
-        if name in ("主动私聊", "主动群发", "主动频道", "召回", "强制召回"):
+        if name in ("主动私聊", "主动群发", "主动频道", "频道私聊", "召回", "强制召回"):
             action = ctx.actions.get(name)
             if not action:
                 raise CKError(f"${name}$ 当前环境不支持")
@@ -1130,7 +1134,7 @@ class CKEngine:
 
     # 频道管理函数：基于 QQ 频道 v1 接口，仅频道场景可用，机器人需相应权限
     _GUILD_FUNC_NAMES = ("频道撤回", "频道禁言", "频道全员禁言", "频道踢人", "频道拉黑",
-                         "身份组列表", "身份组加", "身份组减", "发帖", "删帖", "帖子列表")
+                         "身份组列表", "身份组加", "身份组减", "发帖", "删帖", "帖子列表", "帖子详情")
 
     async def _guild_func(self, name: str, rest: str, ctx: Ctx) -> str:
         """频道管理：禁言/撤回/踢人/拉黑/身份组/发帖删帖，返回 {"success":..,"data":..}。"""
@@ -1177,16 +1181,34 @@ class CKEngine:
             method, path = "DELETE", f"/guilds/{gid}/members/{args[0]}/roles/{args[1]}"
             payload = {"channel": {"id": cid}}
         elif name == "发帖":
-            parts = rest.split(" ", 1)
-            if len(parts) != 2 or not parts[0] or not parts[1].strip():
-                raise CKError(f"${name}$ 格式：${name} 标题 内容$（需在论坛子频道使用）")
+            # $发帖 [子频道ID] [格式] 标题 内容$：格式 文本/html/md/json（默认文本）
+            tokens = rest.split(" ")
+            if tokens and tokens[0].isdigit() and len(tokens[0]) >= 5:
+                cid = tokens.pop(0)
+            fmt = 1
+            fmt_map = {"文本": 1, "text": 1, "html": 2, "md": 3, "markdown": 3, "json": 4}
+            if tokens and tokens[0].lower() in fmt_map:
+                fmt = fmt_map[tokens.pop(0).lower()]
+            title = tokens.pop(0) if tokens else ""
+            content = " ".join(tokens).strip()
+            if not title or not content:
+                raise CKError(f"${name}$ 格式：${name} [子频道ID] [文本/html/md/json] 标题 内容$（需论坛子频道）")
             method, path = "PUT", f"/channels/{cid}/threads"
-            payload = {"title": parts[0], "content": parts[1].strip(), "format": 1}
+            payload = {"title": title, "content": content, "format": fmt}
         elif name == "删帖":
-            need(1, f"${name} 帖子ID$")
+            need(1, f"${name} 帖子ID$（可选前置子频道ID：${name} 子频道ID 帖子ID$）")
+            if len(args) >= 2 and args[0].isdigit() and len(args[0]) >= 5:
+                cid, args = args[0], args[1:]
             method, path = "DELETE", f"/channels/{cid}/threads/{args[0]}"
         elif name == "帖子列表":
+            if args and args[0].isdigit() and len(args[0]) >= 5:
+                cid = args[0]
             method, path = "GET", f"/channels/{cid}/threads"
+        elif name == "帖子详情":
+            need(1, f"${name} 帖子ID$（可选前置子频道ID：${name} 子频道ID 帖子ID$）")
+            if len(args) >= 2 and args[0].isdigit() and len(args[0]) >= 5:
+                cid, args = args[0], args[1:]
+            method, path = "GET", f"/channels/{cid}/threads/{args[0]}"
         else:
             raise CKError(f"未知函数: ${name}$")
         ok, result = await api(method, path, payload)
@@ -1284,6 +1306,87 @@ class CKEngine:
             except sqlite3.Error as exc:
                 return json.dumps({"data": None, "errorMsg": str(exc), "status": -1}, ensure_ascii=False)
         raise CKError(f"$数据库$ 不支持: {action}")
+
+    # 百度云文本审核：access_token 缓存 (token, 过期时间戳)
+    _baidu_token: Optional[Tuple[str, float]] = None
+
+    async def censor_text(self, text: str) -> str:
+        """$内容审核 文本$：自动选接口——配了百度密钥走百度云，否则用内置接口。
+        统一返回 {"success":..,"conclusion":"合规|不合规|疑似","provider":"baidu|elaina","data":..}。"""
+        if not text:
+            raise CKError("$内容审核$ 格式：$内容审核 文本$")
+        conf = globals_load()
+        if conf.get("百度审核KEY", "") and conf.get("百度审核SECRET", ""):
+            body = await self._baidu_censor(text)
+            data = json.loads(body)
+            data["provider"] = "baidu"
+            return json.dumps(data, ensure_ascii=False)
+        body = await self._elaina_censor(text)
+        return body
+
+    _ELAINA_CENSOR_URL = "https://i.elaina.vin/api/审核系统.php"
+    _ELAINA_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+    async def _elaina_censor(self, text: str) -> str:
+        """内置审核接口（冷曦API）：safe=1 合规，其余不合规。"""
+        url = self._ELAINA_CENSOR_URL + "?text=" + urllib.parse.quote_plus(text)
+        try:
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
+            async with aiohttp.ClientSession(timeout=timeout,
+                                             headers={"User-Agent": self._ELAINA_UA}) as session:
+                async with session.get(url) as resp:
+                    body = (await resp.content.read(HTTP_MAX_BYTES)).decode("utf-8", errors="replace")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise CKError(f"$内容审核$ 内置接口访问失败: {exc}")
+        try:
+            data = json.loads(body)
+        except ValueError:
+            raise CKError(f"$内容审核$ 内置接口返回异常: {body[:200]}")
+        result = data.get("result") if isinstance(data, dict) else None
+        ok = isinstance(data, dict) and data.get("status") == "success" and isinstance(result, dict)
+        safe = result.get("safe") if ok else None
+        conclusion = "" if not ok else ("合规" if str(safe) == "1" else "不合规")
+        return json.dumps({"success": ok, "conclusion": conclusion, "provider": "elaina",
+                           "data": data}, ensure_ascii=False)
+
+    async def _baidu_censor(self, text: str) -> str:
+        """$百度审核 文本$：百度云文本内容审核。密钥存全局变量
+        百度审核KEY / 百度审核SECRET，返回 {"success":..,"conclusion":"合规|不合规|疑似|审核失败","data":..}。"""
+        if not text:
+            raise CKError("$百度审核$ 格式：$百度审核 文本$")
+        conf = globals_load()
+        ak = conf.get("百度审核KEY", "")
+        sk = conf.get("百度审核SECRET", "")
+        if not ak or not sk:
+            raise CKError("$百度审核$ 未配置密钥：先 $全局写 百度审核KEY 你的APIKey$ 和 $全局写 百度审核SECRET 你的SecretKey$")
+        now = time.time()
+        cached = CKEngine._baidu_token
+        token = cached[0] if cached and cached[1] > now else ""
+        if not token:
+            body = await self._http_post(
+                "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials"
+                f"&client_id={urllib.parse.quote(ak)}&client_secret={urllib.parse.quote(sk)}", "")
+            try:
+                data = json.loads(body)
+            except ValueError:
+                data = {}
+            token = data.get("access_token", "") if isinstance(data, dict) else ""
+            if not token:
+                raise CKError(f"$百度审核$ 获取token失败: {body[:200]}")
+            expires = float(data.get("expires_in", 2592000))
+            CKEngine._baidu_token = (token, now + expires - 60)
+        body = await self._http_post(
+            "https://aip.baidubce.com/rest/2.0/solution/v1/text_censor/v2/user_defined"
+            f"?access_token={urllib.parse.quote(token)}",
+            "text=" + urllib.parse.quote_plus(text))
+        try:
+            data = json.loads(body)
+        except ValueError:
+            raise CKError(f"$百度审核$ 返回异常: {body[:200]}")
+        conclusion = data.get("conclusion", "") if isinstance(data, dict) else ""
+        return json.dumps({"success": bool(conclusion), "conclusion": conclusion, "data": data},
+                          ensure_ascii=False)
 
     async def _http_get(self, url: str) -> str:
         if not url.startswith(("http://", "https://")):
