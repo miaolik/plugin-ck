@@ -191,7 +191,7 @@ i:[%i%+1]
       <p>进退事件通知：建名为 <code>入群欢迎</code> / <code>退群提示</code> / <code>机器人入群</code> / <code>机器人退群</code> / <code>添加好友</code> / <code>删除好友</code> / <code>入频道欢迎</code> / <code>退频道提示</code> 的词库块，对应事件发生时自动触发；块内可用 <code>%ID%</code>（当事人）<code>%昵称%</code>（频道事件才有）<code>%群ID%</code> <code>%频道号%</code> <code>%操作人ID%</code>。文本输出默认去向：群事件主动发到该群；频道事件发私信给该用户（发到子频道用 <code>$主动频道$</code>）；好友/机器人退群事件发私聊。需机器人订阅对应事件（频道进退为 GUILD_MEMBER_ADD/REMOVE）。</p>
       <div class="copy-block">入群欢迎
 🎉 欢迎新成员！发送「菜单」看看能做什么吧</div>
-      <p>发帖审核：内置词库「发帖审核」（默认关闭）——发送 <code>发帖审核</code> 看菜单：开启后发帖命中违禁词自动删帖并向指定子频道发提示；可选接入百度云内容审核 <code>$百度审核 文本$</code>（先 <code>$全局写 百度审核KEY xxx$</code> / <code>$全局写 百度审核SECRET xxx$</code> 配置密钥，违禁词未命中时再审）。需私域 FORUM 事件权限。</p>
+      <p>发帖审核：内置词库「发帖审核」（默认关闭，按频道分开设置）——在目标频道发送 <code>发帖审核</code> 看菜单：开启后发帖命中违禁词自动删帖、私信通知发帖用户、并向指定子频道发提示；设置类指令仅频道主/管理员可用；通知里的标题会脱敏（违禁词用 *** 遮掩，AI 判不合规则整体隐藏）。可选「内容审核开启」接入 AI 内容审核 <code>$内容审核 文本$</code>（违禁词未命中时再审）：百度密钥没填用内置接口，填了自动改走百度云（在「设置」页填写并测试连通）。需私域 FORUM 事件权限。</p>
       <h4>文本处理</h4>
       <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
       <h4>随机</h4>
@@ -412,6 +412,18 @@ $写 签到 %ID% %时间MMdd%$</div>
         <button class="primary" onclick="saveSettings()">保存</button>
       </div>
       <button style="margin-top:8px" onclick="loadSettings()">刷新</button>
+      <h4 style="margin:16px 0 8px;font-size:13px;color:#5352ed">内容审核接口</h4>
+      <p style="color:#747d8c;font-size:12px;margin-bottom:8px">作用于 <code>$内容审核$</code>（发帖审核的 AI 审核）：百度密钥留空时用内置接口，填了则自动改走百度云审核（百度智能云→内容审核→应用的 API Key / Secret Key）。「测试连通」会先保存密钥再真实调用一次审核。</p>
+      <div style="display:flex;flex-direction:column;gap:6px;max-width:420px">
+        <input type="text" id="censor-key" placeholder="百度审核KEY（留空=用内置接口）" style="margin:0">
+        <input type="password" id="censor-secret" placeholder="百度审核SECRET" style="margin:0">
+        <input type="text" id="censor-text" placeholder="测试文本（默认：你好）" style="margin:0">
+        <div style="display:flex;gap:6px">
+          <button class="primary" onclick="censorTest()">测试连通</button>
+          <button onclick="censorClear()">清除百度密钥</button>
+        </div>
+        <pre id="censor-result" style="display:none;white-space:pre-wrap;background:#f1f2f6;border-radius:6px;padding:8px;font-size:12px"></pre>
+      </div>
     </div>
   </div>
 </div>
@@ -474,7 +486,7 @@ function tab(i, el) {
   document.getElementById('tab-' + i).classList.add('active');
   if (i === 2) loadGlobals();
   if (i === 3) loadData();
-  if (i === 5) loadSettings();
+  if (i === 5) { loadSettings(); loadCensor(); }
 }
 
 async function loadDicts() {
@@ -629,6 +641,32 @@ async function saveSettings() {
   const v = document.getElementById('set-timeout').value.trim();
   const r = await api('settings', { http_timeout: v });
   toast(r.message || (r.success ? '已保存' : '失败'), r.success);
+}
+async function loadCensor() {
+  const r = await api('globals');
+  if (r.success) document.getElementById('censor-key').value = (r.globals || {})['百度审核KEY'] || '';
+}
+async function censorTest() {
+  const box = document.getElementById('censor-result');
+  box.style.display = 'block'; box.textContent = '测试中…';
+  const r = await api('censor_test', {
+    baidu_key: document.getElementById('censor-key').value.trim(),
+    baidu_secret: document.getElementById('censor-secret').value.trim(),
+    text: document.getElementById('censor-text').value.trim(),
+  });
+  if (r.success) {
+    box.textContent = `✅ 连通成功｜接口: ${r.provider === 'baidu' ? '百度云' : '内置(elaina)'}｜结论: ${r.conclusion}\n` + JSON.stringify(r.result, null, 2);
+    toast('测试成功', true);
+  } else {
+    box.textContent = '❌ ' + (r.message || '测试失败');
+    toast(r.message || '测试失败', false);
+  }
+}
+async function censorClear() {
+  const r = await api('censor_test', { clear_baidu: true, text: '你好' });
+  document.getElementById('censor-key').value = '';
+  document.getElementById('censor-secret').value = '';
+  toast(r.success ? '已清除，当前使用内置接口' : (r.message || '失败'), r.success);
 }
 
 document.querySelectorAll('.copy-block').forEach(b => {

@@ -170,6 +170,34 @@ async def api_test(request):
     })
 
 
+@register_route("POST", "/api/ext/ck/censor_test")
+async def api_censor_test(request):
+    """内容审核测试连通：可先保存百度密钥（留空则用内置接口），再实际调用一次审核。"""
+    body = await request.json()
+    key = str(body.get("baidu_key", "") or "").strip()
+    secret = str(body.get("baidu_secret", "") or "").strip()
+    data = globals_load()
+    changed = False
+    if key or secret:
+        if not (key and secret):
+            return _err("百度审核KEY 与 百度审核SECRET 需同时填写（或都留空用内置接口）")
+        data["百度审核KEY"], data["百度审核SECRET"] = key, secret
+        changed = True
+    if body.get("clear_baidu"):
+        data.pop("百度审核KEY", None)
+        data.pop("百度审核SECRET", None)
+        changed = True
+    if changed:
+        globals_save(data)
+    text = str(body.get("text", "") or "").strip() or "你好"
+    try:
+        result = json.loads(await engine.censor_text(text))
+    except Exception as exc:
+        return web.json_response({"success": False, "message": f"审核调用失败: {exc}"})
+    return web.json_response({"success": True, "provider": result.get("provider", ""),
+                              "conclusion": result.get("conclusion", ""), "result": result})
+
+
 @register_route("GET", "/api/ext/ck/settings")
 async def api_settings_get(request):
     return web.json_response({"success": True, "settings": {"http_timeout": http_timeout()},

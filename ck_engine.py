@@ -1051,6 +1051,8 @@ class CKEngine:
             return await self._http_post(args[0], args[1] if len(args) > 1 else "")
         if name == "百度审核":
             return await self._baidu_censor(rest.strip())
+        if name == "内容审核":
+            return await self.censor_text(rest.strip())
         if name == "下载":
             args = rest.split(" ", 1)
             if len(args) != 2:
@@ -1307,6 +1309,46 @@ class CKEngine:
 
     # 百度云文本审核：access_token 缓存 (token, 过期时间戳)
     _baidu_token: Optional[Tuple[str, float]] = None
+
+    async def censor_text(self, text: str) -> str:
+        """$内容审核 文本$：自动选接口——配了百度密钥走百度云，否则用内置接口。
+        统一返回 {"success":..,"conclusion":"合规|不合规|疑似","provider":"baidu|elaina","data":..}。"""
+        if not text:
+            raise CKError("$内容审核$ 格式：$内容审核 文本$")
+        conf = globals_load()
+        if conf.get("百度审核KEY", "") and conf.get("百度审核SECRET", ""):
+            body = await self._baidu_censor(text)
+            data = json.loads(body)
+            data["provider"] = "baidu"
+            return json.dumps(data, ensure_ascii=False)
+        body = await self._elaina_censor(text)
+        return body
+
+    _ELAINA_CENSOR_URL = "https://i.elaina.vin/api/审核系统.php"
+    _ELAINA_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+    async def _elaina_censor(self, text: str) -> str:
+        """内置审核接口（冷曦API）：safe=1 合规，其余不合规。"""
+        url = self._ELAINA_CENSOR_URL + "?text=" + urllib.parse.quote_plus(text)
+        try:
+            timeout = aiohttp.ClientTimeout(total=http_timeout())
+            async with aiohttp.ClientSession(timeout=timeout,
+                                             headers={"User-Agent": self._ELAINA_UA}) as session:
+                async with session.get(url) as resp:
+                    body = (await resp.content.read(HTTP_MAX_BYTES)).decode("utf-8", errors="replace")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise CKError(f"$内容审核$ 内置接口访问失败: {exc}")
+        try:
+            data = json.loads(body)
+        except ValueError:
+            raise CKError(f"$内容审核$ 内置接口返回异常: {body[:200]}")
+        result = data.get("result") if isinstance(data, dict) else None
+        ok = isinstance(data, dict) and data.get("status") == "success" and isinstance(result, dict)
+        safe = result.get("safe") if ok else None
+        conclusion = "" if not ok else ("合规" if str(safe) == "1" else "不合规")
+        return json.dumps({"success": ok, "conclusion": conclusion, "provider": "elaina",
+                           "data": data}, ensure_ascii=False)
 
     async def _baidu_censor(self, text: str) -> str:
         """$百度审核 文本$：百度云文本内容审核。密钥存全局变量

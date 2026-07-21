@@ -200,6 +200,18 @@ def _event_get(event, path: str) -> str:
     return str(data) if data else ""
 
 
+def _channel_role(event) -> str:
+    """频道消息身份：d.member.roles 里 4=频道主 2=管理员 5=子频道管理，其余为成员。"""
+    d = (getattr(event, "raw", None) or {}).get("d") or {}
+    roles = (d.get("member") or {}).get("roles") or []
+    roles = {str(r) for r in roles}
+    if "4" in roles:
+        return "owner"
+    if "2" in roles or "5" in roles:
+        return "admin"
+    return "member" if roles else ""
+
+
 def _avatar_url(event) -> str:
     """头像：频道消息数据自带 author.avatar；群/私聊用 https://q.qlogo.cn/qqapp/{appid}/{openid}/640"""
     avatar = _event_get(event, "d/author/avatar")
@@ -341,7 +353,8 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         robot_name=(getattr(bot, "name", "") or "") if bot else
                    (getattr(getattr(event, "sender", None), "_bot_name", "") or ""),
         avatar=_avatar_url(event),
-        role=getattr(event, "member_role", "") or _event_get(event, "d/author/member_role"),
+        role=getattr(event, "member_role", "") or _event_get(event, "d/author/member_role")
+             or _channel_role(event),
         ats=_event_ats(event),
         images=_event_images(event),
         chat_type=getattr(event, "chat_type", "") or "",
