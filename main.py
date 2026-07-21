@@ -106,7 +106,7 @@ def _members_get(gid: str, uid: str):
 _members_load()
 
 
-async def _bot_role(event) -> str:
+async def _bot_role(event, cache_only: bool = False) -> str:
     """机器人在本群的真实身份（owner/admin/member）。
 
     优先用 mentions 里解析出的 bot_member_role（被@时才有），否则调用
@@ -125,7 +125,7 @@ async def _bot_role(event) -> str:
     persisted = _members_get(event.group_id, "__bot__")
     if persisted:
         role = persisted.get("member_role", "") or ""
-    if not role:
+    if not role and not cache_only:
         try:
             member = await event.sender.get_bot_member(event.group_id)
             if isinstance(member, dict):
@@ -137,19 +137,15 @@ async def _bot_role(event) -> str:
 
 
 async def _fill_member_vars(event, ctx) -> None:
-    """回调等不带 author 的事件里, 补全 %昵称%/%身份%：优先本地成员缓存
-    (用户在群里发过言即有记录), 接口仅作尝试项, 失败静默。"""
+    """回调等不带 author 的事件里, 补全 %昵称%/%身份%：只读本地成员缓存
+    (用户在群里发过言即有记录)。成员接口尚未开放, 回调路径不打接口,
+    避免阻塞导致客户端提示请求超时。"""
     if not getattr(event, "is_group", False) or not event.group_id:
         return
     if ctx.username and ctx.role:
         return
     uid = event.user_id or ""
     rec = _members_get(event.group_id, uid)
-    if not rec:
-        try:
-            rec = await event.sender.get_group_member(event.group_id, uid)
-        except Exception:
-            rec = None
     if isinstance(rec, dict):
         ctx.username = ctx.username or rec.get("username", "") or ""
         ctx.role = ctx.role or rec.get("member_role", "") or ""
@@ -253,6 +249,17 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
     async def send_to_channel(cid, content):
         await event.sender.send_to_channel(cid, content)
 
+    async def send_guild_dm(uid, content):
+        # 频道私信：先创建私信会话, 再向会话 guild 发消息
+        gid = event.guild_id or str(((getattr(event, "raw", None) or {}).get("d") or {}).get("guild_id", "") or "")
+        ok, data = await event.sender._request(
+            "POST", "/users/@me/dms",
+            json={"recipient_id": uid, "source_guild_id": gid})
+        dms_gid = str((data or {}).get("guild_id", "") or "") if ok else ""
+        if not dms_gid:
+            raise RuntimeError(f"创建频道私信会话失败: {data}")
+        await event.sender._request("POST", f"/dms/{dms_gid}/messages", json={"content": content})
+
     async def wakeup(uid, content):
         await event.send_wakeup(uid, content)
 
@@ -312,6 +319,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         "主动私聊": send_to_user,
         "主动群发": send_to_group,
         "主动频道": send_to_channel,
+        "频道私聊": send_guild_dm,
         "召回": wakeup,
         "强制召回": force_wakeup,
         "邀请链接": share_link,
@@ -588,9 +596,10 @@ async def ck_interaction(event, match):
     if len(_btn_last_click) > 10000:
         _btn_last_click.clear()
 
-    # 回调事件不带 author/mentions, 昵称身份与机器人身份从本地缓存/接口补全
+    # 回调事件不带 author/mentions, 昵称身份与机器人身份只读本地缓存
+    # (不打成员接口, 避免阻塞导致回调响应超时)
     hit = engine.find_block(data) is not None
-    bot_role = await _bot_role(event) if hit else ""
+    bot_role = await _bot_role(event, cache_only=True) if hit else ""
     ctx = build_ctx(event, bot_role)
     ctx.message = data
     if hit:
@@ -669,6 +678,60 @@ async def ck_forum(event, match):
     if text and ctx.channel_id:
         try:
             await event.sender.send_to_channel(ctx.channel_id, text)
+        except Exception:
+            pass
+    return True
+
+
+_LIFECYCLE_BLOCKS = {
+    "GROUP_MEMBER_ADD": "入群欢迎",
+    "GROUP_MEMBER_REMOVE": "退群提示",
+    "GROUP_ADD_ROBOT": "机器人入群",
+    "GROUP_DEL_ROBOT": "机器人退群",
+    "FRIEND_ADD": "添加好友",
+    "FRIEND_DEL": "删除好友",
+    "GUILD_MEMBER_ADD": "入频道欢迎",
+    "GUILD_MEMBER_REMOVE": "退频道提示",
+}
+
+
+@handler(r"^[\s\S]*$", name="词库进退事件", desc="入群/退群/入频道/退频道等事件触发词库", priority=-100,
+         event_types=list(_LIFECYCLE_BLOCKS))
+async def ck_lifecycle(event, match):
+    """进退事件触发词库里同名块（入群欢迎/退群提示/入频道欢迎/退频道提示等），块不存在则忽略。
+    文本输出：群事件主动发到该群；频道事件发私信给该用户（可在块里用 $主动频道$ 发到子频道）。"""
+    et = event.event_type or ""
+    block_name = _LIFECYCLE_BLOCKS.get(et, "")
+    if not block_name or engine.find_block(block_name) is None:
+        return
+    d = (getattr(event, "raw", None) or {}).get("d") or {}
+    user = d.get("user") or {}
+    ctx = build_ctx(event)
+    ctx.message = block_name
+    ctx.user_id = ctx.user_id or str(user.get("id", "") or d.get("member_openid", "")
+                                     or d.get("op_member_openid", "") or "")
+    ctx.username = ctx.username or str(user.get("username", "") or d.get("nick", "") or "")
+    ctx.guild_id = ctx.guild_id or str(d.get("guild_id", "") or "")
+    if et.startswith("GUILD_"):
+        ctx.group_id = ctx.group_id or ctx.guild_id
+        ctx.chat_type = "channel"
+    ctx.extras.update({
+        "操作人ID": str(d.get("op_user_id", "") or d.get("op_member_openid", "") or ""),
+    })
+    matched = await engine.handle(ctx)
+    if not matched:
+        return
+    if ctx.errors:
+        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+    text = "".join(o["content"] for o in ctx.outputs if o["type"] == "text").strip()
+    if text:
+        try:
+            if et.startswith("GUILD_") and ctx.user_id:
+                await ctx.actions["频道私聊"](ctx.user_id, text)
+            elif event.group_id and et != "GROUP_DEL_ROBOT":
+                await event.send_to_group(event.group_id, text)
+            elif ctx.user_id and et in ("FRIEND_ADD", "FRIEND_DEL", "GROUP_DEL_ROBOT"):
+                await event.send_to_user(ctx.user_id, text)
         except Exception:
             pass
     return True

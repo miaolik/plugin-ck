@@ -1070,7 +1070,7 @@ class CKEngine:
             await self.run_command(rest.strip(), ctx, depth, internal_only=True)
             return ""
 
-        if name in ("主动私聊", "主动群发", "主动频道", "召回", "强制召回"):
+        if name in ("主动私聊", "主动群发", "主动频道", "频道私聊", "召回", "强制召回"):
             action = ctx.actions.get(name)
             if not action:
                 raise CKError(f"${name}$ 当前环境不支持")
