@@ -185,6 +185,9 @@ i:[%i%+1]
       <h4>主动消息 / 召回 / 成员 / 邀请链接</h4>
       <span class="snip">$主动私聊 %ID% 内容$</span><span class="snip">$主动群发 %群ID% 内容$</span><span class="snip">$召回 %ID% 内容$</span><span class="snip">$强制召回 %ID% 内容$</span><span class="snip">$群成员 %ID%$</span><span class="snip">$机器人成员$</span><span class="snip">$邀请链接$</span><span class="snip">$官方API GET /路径$</span>
       <p><code>$主动私聊/主动群发$</code> 不回复当前消息而直接向目标发送（配合 <code>$调用 毫秒 指令$</code> 可延迟发送）；<code>$群成员 ID$</code>/<code>$机器人成员$</code> 返回成员 JSON，用 <code>@%变% [字段]</code> 取值；<code>$邀请链接 可选数据$</code> 生成专属邀请链接；<code>$官方API 方法 /路径 JSON体$</code> 用框架凭证直调 QQ 开放平台接口。以上仅真实消息环境可用，Web 沙盒测试会提示不支持。</p>
+      <h4>频道管理（仅频道场景，机器人需相应权限）</h4>
+      <span class="snip">$主动频道 子频道ID 内容$</span><span class="snip">$频道禁言 用户ID 秒数$</span><span class="snip">$频道全员禁言 秒数$</span><span class="snip">$频道撤回 消息ID$</span><span class="snip">$频道踢人 用户ID$</span><span class="snip">$频道拉黑 用户ID$</span><span class="snip">$身份组列表$</span><span class="snip">$身份组加 用户ID 身份组ID$</span><span class="snip">$身份组减 用户ID 身份组ID$</span><span class="snip">$发帖 标题 内容$</span><span class="snip">$删帖 帖子ID$</span><span class="snip">$帖子列表$</span>
+      <p>禁言秒数 0=解除；发帖/删帖/帖子列表需在论坛子频道使用；均返回 <code>{"success":…,"data":…}</code>，用 <code>@%变% [字段]</code> 取值。示例见内置词库「示例频道」。</p>
       <h4>文本处理</h4>
       <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
       <h4>随机</h4>
@@ -310,6 +313,8 @@ $撤回$
       <h4>主动消息 / 召回 / 成员查询 / 邀请链接</h4>
       <p><code>$主动私聊 ID 内容$</code> / <code>$主动群发 群ID 内容$</code> 主动发送；<code>$召回 ID 内容$</code> / <code>$强制召回 ID 内容$</code> 召回消息；<code>$群成员 ID$</code> / <code>$机器人成员$</code> 返回成员 JSON；<code>$邀请链接$</code> 生成专属邀请链接。</p>
       <p style="color:#e67e22">注意：平台尚未开放群成员查询接口，成员信息以消息体为主：插件会自动按群记录每个发过言成员的昵称/身份（同一人在不同群的身份分开存），查自己立即可用，查他人需对方在本群发过言；<code>$机器人成员$</code> 需机器人在本群被@过一次（此后持久记住）；字段有 username/member_role/first_seen/last_seen；沙盒测试不可用，需真实消息环境。失败时回复会附 ⚠ 原因。</p>
+      <h4>频道管理</h4>
+      <p><code>$主动频道 子频道ID 内容$</code> 主动发言；<code>$频道禁言 用户ID 秒数$</code> / <code>$频道全员禁言 秒数$</code>（0=解除）；<code>$频道撤回 消息ID$</code>；<code>$频道踢人 用户ID$</code> / <code>$频道拉黑 用户ID$</code>；<code>$身份组列表$</code> / <code>$身份组加 用户ID 身份组ID$</code> / <code>$身份组减 用户ID 身份组ID$</code>；<code>$发帖 标题 内容$</code> / <code>$删帖 帖子ID$</code> / <code>$帖子列表$</code>（论坛子频道）。仅频道场景可用，机器人需相应权限；返回 <code>{"success":…,"data":…}</code>。</p>
       <div class="copy-block">查我
 M:$群成员 %ID%$
 群昵称：@%M% [username]

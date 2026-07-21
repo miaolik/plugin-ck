@@ -437,6 +437,8 @@ def _parse_index_array(text: str) -> list:
 def array_to_text(value) -> str:
     if value is None:
         return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, float) and value == int(value):
@@ -596,11 +598,13 @@ class CKEngine:
                   robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
                   raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
                   recall=ctx.recall, actions=ctx.actions)
+        sub.vars.update(ctx.vars)  # 子块可读调用方局部变量
         sub.match = m
         try:
             await self._run_lines(blk.lines, sub, depth + 1)
         except (ReturnSignal, BreakSignal, ContinueSignal):
             pass
+        ctx.vars.update(sub.vars)  # 子块赋值回传, [内部]块可当查表/子程序用
         ctx.errors.extend(sub.errors)
         # 合并输出（回调语义）
         for seg in sub.outputs:
@@ -1066,7 +1070,7 @@ class CKEngine:
             await self.run_command(rest.strip(), ctx, depth, internal_only=True)
             return ""
 
-        if name in ("主动私聊", "主动群发", "召回", "强制召回"):
+        if name in ("主动私聊", "主动群发", "主动频道", "召回", "强制召回"):
             action = ctx.actions.get(name)
             if not action:
                 raise CKError(f"${name}$ 当前环境不支持")
@@ -1097,6 +1101,8 @@ class CKEngine:
             if not member:
                 raise CKError("$机器人成员$ 查询失败（需在群聊中@过机器人一次后可用）")
             return json.dumps(member, ensure_ascii=False)
+        if name in self._GUILD_FUNC_NAMES:
+            return await self._guild_func(name, rest, ctx)
         if name == "官方API":
             action = ctx.actions.get(name)
             if not action:
@@ -1121,6 +1127,70 @@ class CKEngine:
             return json.dumps({"success": bool(ok), "data": result}, ensure_ascii=False)
 
         raise CKError(f"未知函数: ${name}$")
+
+    # 频道管理函数：基于 QQ 频道 v1 接口，仅频道场景可用，机器人需相应权限
+    _GUILD_FUNC_NAMES = ("频道撤回", "频道禁言", "频道全员禁言", "频道踢人", "频道拉黑",
+                         "身份组列表", "身份组加", "身份组减", "发帖", "删帖", "帖子列表")
+
+    async def _guild_func(self, name: str, rest: str, ctx: Ctx) -> str:
+        """频道管理：禁言/撤回/踢人/拉黑/身份组/发帖删帖，返回 {"success":..,"data":..}。"""
+        api = (ctx.actions or {}).get("官方API")
+        if not api:
+            raise CKError(f"${name}$ 当前环境不支持")
+        gid, cid = ctx.guild_id, ctx.channel_id
+        if not gid:
+            raise CKError(f"${name}$ 仅频道场景可用")
+        args = rest.split()
+
+        def need(n: int, usage: str) -> None:
+            if len(args) < n or any(not a for a in args[:n]):
+                raise CKError(f"${name}$ 格式：{usage}")
+
+        method: str
+        payload = None
+        if name == "频道撤回":
+            need(1, f"${name} 消息ID$")
+            method, path = "DELETE", f"/channels/{cid}/messages/{args[0]}?hidetip=true"
+        elif name == "频道禁言":
+            need(2, f"${name} 用户ID 秒数$（秒数 0=解除）")
+            method, path = "PATCH", f"/guilds/{gid}/members/{args[0]}/mute"
+            payload = {"mute_seconds": str(args[1])}
+        elif name == "频道全员禁言":
+            need(1, f"${name} 秒数$（秒数 0=解除）")
+            method, path = "PATCH", f"/guilds/{gid}/mute"
+            payload = {"mute_seconds": str(args[0])}
+        elif name == "频道踢人":
+            need(1, f"${name} 用户ID$")
+            method, path = "DELETE", f"/guilds/{gid}/members/{args[0]}"
+        elif name == "频道拉黑":
+            need(1, f"${name} 用户ID$")
+            method, path = "DELETE", f"/guilds/{gid}/members/{args[0]}"
+            payload = {"add_blacklist": True}
+        elif name == "身份组列表":
+            method, path = "GET", f"/guilds/{gid}/roles"
+        elif name == "身份组加":
+            need(2, f"${name} 用户ID 身份组ID$")
+            method, path = "PUT", f"/guilds/{gid}/members/{args[0]}/roles/{args[1]}"
+            payload = {"channel": {"id": cid}}
+        elif name == "身份组减":
+            need(2, f"${name} 用户ID 身份组ID$")
+            method, path = "DELETE", f"/guilds/{gid}/members/{args[0]}/roles/{args[1]}"
+            payload = {"channel": {"id": cid}}
+        elif name == "发帖":
+            parts = rest.split(" ", 1)
+            if len(parts) != 2 or not parts[0] or not parts[1].strip():
+                raise CKError(f"${name}$ 格式：${name} 标题 内容$（需在论坛子频道使用）")
+            method, path = "PUT", f"/channels/{cid}/threads"
+            payload = {"title": parts[0], "content": parts[1].strip(), "format": 1}
+        elif name == "删帖":
+            need(1, f"${name} 帖子ID$")
+            method, path = "DELETE", f"/channels/{cid}/threads/{args[0]}"
+        elif name == "帖子列表":
+            method, path = "GET", f"/channels/{cid}/threads"
+        else:
+            raise CKError(f"未知函数: ${name}$")
+        ok, result = await api(method, path, payload)
+        return json.dumps({"success": bool(ok), "data": result}, ensure_ascii=False)
 
     def _text_func(self, name: str, rest: str) -> str:
         sep_and_payload = rest.split(" ", 1)
