@@ -1049,6 +1049,8 @@ class CKEngine:
         if name == "POST访问":
             args = rest.split(" ", 1)
             return await self._http_post(args[0], args[1] if len(args) > 1 else "")
+        if name == "百度审核":
+            return await self._baidu_censor(rest.strip())
         if name == "下载":
             args = rest.split(" ", 1)
             if len(args) != 2:
@@ -1302,6 +1304,47 @@ class CKEngine:
             except sqlite3.Error as exc:
                 return json.dumps({"data": None, "errorMsg": str(exc), "status": -1}, ensure_ascii=False)
         raise CKError(f"$数据库$ 不支持: {action}")
+
+    # 百度云文本审核：access_token 缓存 (token, 过期时间戳)
+    _baidu_token: Optional[Tuple[str, float]] = None
+
+    async def _baidu_censor(self, text: str) -> str:
+        """$百度审核 文本$：百度云文本内容审核。密钥存全局变量
+        百度审核KEY / 百度审核SECRET，返回 {"success":..,"conclusion":"合规|不合规|疑似|审核失败","data":..}。"""
+        if not text:
+            raise CKError("$百度审核$ 格式：$百度审核 文本$")
+        conf = globals_load()
+        ak = conf.get("百度审核KEY", "")
+        sk = conf.get("百度审核SECRET", "")
+        if not ak or not sk:
+            raise CKError("$百度审核$ 未配置密钥：先 $全局写 百度审核KEY 你的APIKey$ 和 $全局写 百度审核SECRET 你的SecretKey$")
+        now = time.time()
+        cached = CKEngine._baidu_token
+        token = cached[0] if cached and cached[1] > now else ""
+        if not token:
+            body = await self._http_post(
+                "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials"
+                f"&client_id={urllib.parse.quote(ak)}&client_secret={urllib.parse.quote(sk)}", "")
+            try:
+                data = json.loads(body)
+            except ValueError:
+                data = {}
+            token = data.get("access_token", "") if isinstance(data, dict) else ""
+            if not token:
+                raise CKError(f"$百度审核$ 获取token失败: {body[:200]}")
+            expires = float(data.get("expires_in", 2592000))
+            CKEngine._baidu_token = (token, now + expires - 60)
+        body = await self._http_post(
+            "https://aip.baidubce.com/rest/2.0/solution/v1/text_censor/v2/user_defined"
+            f"?access_token={urllib.parse.quote(token)}",
+            "text=" + urllib.parse.quote_plus(text))
+        try:
+            data = json.loads(body)
+        except ValueError:
+            raise CKError(f"$百度审核$ 返回异常: {body[:200]}")
+        conclusion = data.get("conclusion", "") if isinstance(data, dict) else ""
+        return json.dumps({"success": bool(conclusion), "conclusion": conclusion, "data": data},
+                          ensure_ascii=False)
 
     async def _http_get(self, url: str) -> str:
         if not url.startswith(("http://", "https://")):
