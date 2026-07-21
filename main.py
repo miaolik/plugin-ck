@@ -17,7 +17,7 @@ from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
 __plugin_meta__ = {
     "name": "词库",
     "description": "GQ 风格词库引擎：变量/正则/如果判断/循环遍历/读写数据/排行榜/数据库/访问URL/按钮/引用/撤回/主动消息/多消息类型，含 Web 词库编辑器",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "author": "miaolik",
 }
 
@@ -511,10 +511,45 @@ _BTN_DEBOUNCE_SECONDS = 2.0
 _btn_last_click: dict = {}
 
 
+async def _ack_interaction(event) -> bool:
+    """向QQ官方确认收到 interaction 事件，防止客户端显示'第三方请求失败'。
+
+    QQ 官方要求：收到 INTERACTION_CREATE 后，必须通过 PUT /interactions/{id}
+    发送 code=0 的确认，否则客户端会一直处于 loading 状态直到超时。
+    """
+    try:
+        # 从事件对象获取 interaction_id
+        interaction_id = getattr(event, "message_id", "") or ""
+        if not interaction_id:
+            # 尝试从原始数据中获取
+            raw = getattr(event, "raw", None) or {}
+            interaction_id = (raw.get("d", {}) or {}).get("id", "") or ""
+        if not interaction_id:
+            return False
+
+        # 使用框架 sender 发送 PUT 请求到 QQ OpenAPI
+        sender = getattr(event, "sender", None)
+        if sender and hasattr(sender, "_request"):
+            await sender._request(
+                "PUT",
+                f"/interactions/{interaction_id}",
+                json={"code": 0}
+            )
+            return True
+        return False
+    except Exception:
+        # ack 失败不应阻塞主逻辑，静默处理
+        return False
+
+
 @handler(r"^[\s\S]*$", name="词库按钮回调", desc="回调按钮触发词库", priority=-100,
          event_types=["INTERACTION_CREATE"])
 async def ck_interaction(event, match):
     """回调按钮(type=1)点击：按钮 data 作为触发词走词库。同一用户同一按钮短时间内只响应一次。"""
+    # 【关键修复】立即向QQ官方确认收到事件，防止客户端显示"第三方请求失败"
+    # 必须在业务逻辑之前调用，因为QQ官方有超时限制（通常3秒内必须回应）
+    await _ack_interaction(event)
+
     data = (event.content or "").strip()
     if not data:
         return
@@ -522,13 +557,11 @@ async def ck_interaction(event, match):
     now = time.monotonic()
     last = _btn_last_click.get(key, 0.0)
     if now - last < _BTN_DEBOUNCE_SECONDS:
-        event.set_callback_code(0)
         return
     _btn_last_click[key] = now
     if len(_btn_last_click) > 10000:
         _btn_last_click.clear()
-    # 先应答交互，再执行词库；否则耗时操作（如接口查询）会导致客户端提示“第三方请求失败”
-    event.set_callback_code(0)
+
     ctx = build_ctx(event)
     ctx.message = data
     matched = await engine.handle(ctx)
