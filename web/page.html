@@ -180,14 +180,14 @@ i:[%i%+1]
       <p>条件支持 <code>==</code> <code>!=</code> <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code>；<code>[算式]</code> 支持 + - * / % 和括号。</p>
       <p><code>循环遍历:数据 项变量 序变量</code>（单字符变量名，序变量可省）遍历 JSON 数组/对象（序=键）/逗号文本；循环内 <code>跳出</code>=break、<code>继续</code>=continue。</p>
       <h4>发送消息</h4>
-      <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±文本±</span><span class="snip">±无后缀±</span><span class="snip">±自动撤回=10±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
-      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±文本±</code> 强制纯文本（markdown 语法原样显示）；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 本次发出的消息 N 秒后自动撤回；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调），<code>±小按钮=...±</code> 同语法但字号更小；<code>\n</code> 或 <code>\r</code> 为换行。</p>
+      <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±文本±</span><span class="snip">±无后缀±</span><span class="snip">±自动撤回=10±</span><span class="snip">±ark=23|描述|提示|纯文字行|文字行;链接±</span><span class="snip">±ark=24|提示|标题|副标题|描述|图片URL|跳转URL|图片副标题±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
+      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±文本±</code> 强制纯文本（markdown 语法原样显示）；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 本次发出的消息 N 秒后自动撤回；<code>±ark=类型|参数...±</code> 支持卡片：23 链接列表（描述|提示|项目|项目…，项目写 <code>文字;链接</code> 带跳转、只写文字为纯文本行）、24 大图文卡片（提示|标题|副标题|描述|图片URL|跳转URL|图片副标题）、37 小图文卡片（提示|标题|副标题|图片URL|跳转URL），实例见内置词库「示例ARK」；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调），<code>±小按钮=...±</code> 同语法但字号更小；<code>\n</code> 或 <code>\r</code> 为换行。</p>
       <h4>主动消息 / 召回 / 成员 / 邀请链接</h4>
       <span class="snip">$主动私聊 %ID% 内容$</span><span class="snip">$主动群发 %群ID% 内容$</span><span class="snip">$召回 %ID% 内容$</span><span class="snip">$强制召回 %ID% 内容$</span><span class="snip">$群成员 %ID%$</span><span class="snip">$机器人成员$</span><span class="snip">$邀请链接$</span><span class="snip">$官方API GET /路径$</span>
       <p><code>$主动私聊/主动群发$</code> 不回复当前消息而直接向目标发送（配合 <code>$调用 毫秒 指令$</code> 可延迟发送）；<code>$群成员 ID$</code>/<code>$机器人成员$</code> 返回成员 JSON，用 <code>@%变% [字段]</code> 取值；<code>$邀请链接 可选数据$</code> 生成专属邀请链接；<code>$官方API 方法 /路径 JSON体$</code> 用框架凭证直调 QQ 开放平台接口。以上仅真实消息环境可用，Web 沙盒测试会提示不支持。</p>
       <h4>频道管理（仅频道场景，机器人需相应权限）</h4>
-      <span class="snip">$主动频道 子频道ID 内容$</span><span class="snip">$频道禁言 用户ID 秒数$</span><span class="snip">$频道全员禁言 秒数$</span><span class="snip">$频道撤回 消息ID$</span><span class="snip">$频道踢人 用户ID$</span><span class="snip">$频道拉黑 用户ID$</span><span class="snip">$身份组列表$</span><span class="snip">$身份组加 用户ID 身份组ID$</span><span class="snip">$身份组减 用户ID 身份组ID$</span><span class="snip">$发帖 标题 内容$</span><span class="snip">$删帖 帖子ID$</span><span class="snip">$帖子列表$</span>
-      <p>禁言秒数 0=解除；发帖/删帖/帖子列表需在论坛子频道使用；均返回 <code>{"success":…,"data":…}</code>，用 <code>@%变% [字段]</code> 取值。示例见内置词库「示例频道」。</p>
+      <span class="snip">$主动频道 子频道ID 内容$</span><span class="snip">$频道禁言 用户ID 秒数$</span><span class="snip">$频道全员禁言 秒数$</span><span class="snip">$频道撤回 消息ID$</span><span class="snip">$频道踢人 用户ID$</span><span class="snip">$频道拉黑 用户ID$</span><span class="snip">$身份组列表$</span><span class="snip">$身份组加 用户ID 身份组ID$</span><span class="snip">$身份组减 用户ID 身份组ID$</span><span class="snip">$发帖 标题 内容$</span><span class="snip">$发帖 子频道ID md 标题 内容$</span><span class="snip">$删帖 帖子ID$</span><span class="snip">$帖子列表$</span>
+      <p>禁言秒数 0=解除；发帖完整格式 <code>$发帖 [子频道ID] [文本/html/md/json] 标题 内容$</code>：子频道ID 不填默认当前子频道，格式不填默认纯文本（html=HTML 源码、md=Markdown、json=富文本 JSON）；删帖/帖子列表也可前置子频道ID（<code>$删帖 子频道ID 帖子ID$</code>）；发帖类需论坛子频道；均返回 <code>{"success":…,"data":…}</code>，用 <code>@%变% [字段]</code> 取值。示例见内置词库「示例频道」。</p>
       <h4>文本处理</h4>
       <span class="snip">$字符串长 文本$</span><span class="snip">$字符包含 内容 关键词$</span><span class="snip">$替换 @ 原文@目标@替换$</span><span class="snip">$取中间 @ 原文@左@右$</span><span class="snip">$分割 @ 文本@,$</span><span class="snip">$正则 @ 文本@(\d+)$</span><span class="snip">$是否为数字 123$</span>
       <h4>随机</h4>
@@ -314,7 +314,10 @@ $撤回$
       <p><code>$主动私聊 ID 内容$</code> / <code>$主动群发 群ID 内容$</code> 主动发送；<code>$召回 ID 内容$</code> / <code>$强制召回 ID 内容$</code> 召回消息；<code>$群成员 ID$</code> / <code>$机器人成员$</code> 返回成员 JSON；<code>$邀请链接$</code> 生成专属邀请链接。</p>
       <p style="color:#e67e22">注意：平台尚未开放群成员查询接口，成员信息以消息体为主：插件会自动按群记录每个发过言成员的昵称/身份（同一人在不同群的身份分开存），查自己立即可用，查他人需对方在本群发过言；<code>$机器人成员$</code> 需机器人在本群被@过一次（此后持久记住）；字段有 username/member_role/first_seen/last_seen；沙盒测试不可用，需真实消息环境。失败时回复会附 ⚠ 原因。</p>
       <h4>频道管理</h4>
-      <p><code>$主动频道 子频道ID 内容$</code> 主动发言；<code>$频道禁言 用户ID 秒数$</code> / <code>$频道全员禁言 秒数$</code>（0=解除）；<code>$频道撤回 消息ID$</code>；<code>$频道踢人 用户ID$</code> / <code>$频道拉黑 用户ID$</code>；<code>$身份组列表$</code> / <code>$身份组加 用户ID 身份组ID$</code> / <code>$身份组减 用户ID 身份组ID$</code>；<code>$发帖 标题 内容$</code> / <code>$删帖 帖子ID$</code> / <code>$帖子列表$</code>（论坛子频道）。仅频道场景可用，机器人需相应权限；返回 <code>{"success":…,"data":…}</code>。</p>
+      <p><code>$主动频道 子频道ID 内容$</code> 主动发言；<code>$频道禁言 用户ID 秒数$</code> / <code>$频道全员禁言 秒数$</code>（0=解除）；<code>$频道撤回 消息ID$</code>；<code>$频道踢人 用户ID$</code> / <code>$频道拉黑 用户ID$</code>；<code>$身份组列表$</code> / <code>$身份组加 用户ID 身份组ID$</code> / <code>$身份组减 用户ID 身份组ID$</code>；<code>$发帖 [子频道ID] [文本/html/md/json] 标题 内容$</code>（子频道ID 不填默认当前，格式不填默认纯文本） / <code>$删帖 [子频道ID] 帖子ID$</code> / <code>$帖子列表 [子频道ID]$</code>（论坛子频道）。仅频道场景可用，机器人需相应权限；返回 <code>{"success":…,"data":…}</code>。</p>
+      <div class="copy-block">发公告
+R:$发帖 md 公告标题 ## 公告内容 **支持Markdown**$
+发帖结果：@%R% [success]</div>
       <div class="copy-block">查我
 M:$群成员 %ID%$
 群昵称：@%M% [username]

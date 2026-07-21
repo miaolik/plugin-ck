@@ -1177,15 +1177,28 @@ class CKEngine:
             method, path = "DELETE", f"/guilds/{gid}/members/{args[0]}/roles/{args[1]}"
             payload = {"channel": {"id": cid}}
         elif name == "发帖":
-            parts = rest.split(" ", 1)
-            if len(parts) != 2 or not parts[0] or not parts[1].strip():
-                raise CKError(f"${name}$ 格式：${name} 标题 内容$（需在论坛子频道使用）")
+            # $发帖 [子频道ID] [格式] 标题 内容$：格式 文本/html/md/json（默认文本）
+            tokens = rest.split(" ")
+            if tokens and tokens[0].isdigit() and len(tokens[0]) >= 5:
+                cid = tokens.pop(0)
+            fmt = 1
+            fmt_map = {"文本": 1, "text": 1, "html": 2, "md": 3, "markdown": 3, "json": 4}
+            if tokens and tokens[0].lower() in fmt_map:
+                fmt = fmt_map[tokens.pop(0).lower()]
+            title = tokens.pop(0) if tokens else ""
+            content = " ".join(tokens).strip()
+            if not title or not content:
+                raise CKError(f"${name}$ 格式：${name} [子频道ID] [文本/html/md/json] 标题 内容$（需论坛子频道）")
             method, path = "PUT", f"/channels/{cid}/threads"
-            payload = {"title": parts[0], "content": parts[1].strip(), "format": 1}
+            payload = {"title": title, "content": content, "format": fmt}
         elif name == "删帖":
-            need(1, f"${name} 帖子ID$")
+            need(1, f"${name} 帖子ID$（可选前置子频道ID：${name} 子频道ID 帖子ID$）")
+            if len(args) >= 2 and args[0].isdigit() and len(args[0]) >= 5:
+                cid, args = args[0], args[1:]
             method, path = "DELETE", f"/channels/{cid}/threads/{args[0]}"
         elif name == "帖子列表":
+            if args and args[0].isdigit() and len(args[0]) >= 5:
+                cid = args[0]
             method, path = "GET", f"/channels/{cid}/threads"
         else:
             raise CKError(f"未知函数: ${name}$")
