@@ -3,6 +3,7 @@
 """词库插件入口：GQ 风格词库引擎 + Web 词库编辑器。"""
 
 import hashlib
+import sys
 import time
 import json
 import re
@@ -567,6 +568,130 @@ async def _load_image_arg(image: str) -> bytes:
     return data
 
 
+def _get_mail_module():
+    """查找已加载的 Agently 邮箱插件（plugin-yx）的 邮箱 模块。"""
+    for mod_name, mod in list(sys.modules.items()):
+        if mod_name.startswith("plugins.") and mod_name.endswith(".邮箱") and hasattr(mod, "send_mail"):
+            return mod
+    raise CKError("邮箱能力不可用：需先安装并加载 Agently 邮箱插件（plugin-yx）")
+
+
+def _mail_require(mod, func_name: str):
+    fn = getattr(mod, func_name, None)
+    if fn is None:
+        raise CKError("邮箱插件版本过旧：请更新 plugin-yx 到最新版")
+    return fn
+
+
+def _mail_slot(mod, rest: str):
+    """解析可选的 槽位=名称 前缀，缺省用邮箱插件当前槽位。"""
+    rest = rest.strip()
+    user = mod.get_current_user()
+    if rest.startswith("槽位="):
+        head, _, tail = rest.partition(" ")
+        user, rest = head[3:], tail.strip()
+    return user, rest
+
+
+async def _mail_send_action(rest: str) -> str:
+    # $邮件发送 [槽位=名] 收件人|主题|正文$（多收件人逗号分隔）
+    mod = _get_mail_module()
+    user, rest = _mail_slot(mod, rest)
+    parts = rest.split("|")
+    if len(parts) < 3:
+        raise CKError("$邮件发送$ 格式：$邮件发送 [槽位=名] 收件人|主题|正文$")
+    to = [x.strip() for x in parts[0].replace("，", ",").split(",") if x.strip()]
+    subject, body = parts[1].strip(), "|".join(parts[2:]).strip()
+    if not to or not subject or not body:
+        raise CKError("$邮件发送$ 收件人、主题、正文不能为空")
+    ok, msg = await mod.send_mail(to, subject, body, user=user)
+    if not ok:
+        raise CKError(f"$邮件发送$ 失败：{msg}")
+    return str(msg)
+
+
+async def _mail_reply_action(rest: str) -> str:
+    # $邮件回复 [槽位=名] 邮件ID|正文$
+    mod = _get_mail_module()
+    user, rest = _mail_slot(mod, rest)
+    parts = rest.split("|", 1)
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+        raise CKError("$邮件回复$ 格式：$邮件回复 [槽位=名] 邮件ID|正文$")
+    ok, msg = await mod.reply_mail(parts[0].strip(), parts[1].strip(), user=user)
+    if not ok:
+        raise CKError(f"$邮件回复$ 失败：{msg}")
+    return str(msg)
+
+
+async def _mail_list_action(rest: str) -> str:
+    # $邮件列表 [槽位=名] [数量] [文件夹]$ → JSON 数组（配合 @%变% [字段] / 循环遍历）
+    mod = _get_mail_module()
+    fetch = _mail_require(mod, "fetch_mails")
+    brief = _mail_require(mod, "_mail_brief")
+    user, rest = _mail_slot(mod, rest)
+    args = rest.split()
+    count = int(args[0]) if args and args[0].isdigit() else 10
+    folder_arg = args[1] if args and args[0].isdigit() and len(args) > 1 else (args[0] if args and not args[0].isdigit() else "")
+    folder = mod.FOLDER_ALIAS.get(folder_arg.strip(), "inbox")
+    ok, res = await fetch(count, folder, user)
+    if not ok:
+        raise CKError(f"$邮件列表$ 失败：{res}")
+    return json.dumps([brief(m) for m in res], ensure_ascii=False)
+
+
+async def _mail_read_action(rest: str) -> str:
+    # $邮件读取 [槽位=名] 邮件ID$ → JSON 对象（subject/sender/to/date/body/attachments）
+    mod = _get_mail_module()
+    fetch = _mail_require(mod, "fetch_mail")
+    user, rest = _mail_slot(mod, rest)
+    mail_id = rest.strip()
+    if not mail_id:
+        raise CKError("$邮件读取$ 格式：$邮件读取 [槽位=名] 邮件ID$")
+    ok, res = await fetch(mail_id, user)
+    if not ok:
+        raise CKError(f"$邮件读取$ 失败：{res}")
+    return json.dumps(res, ensure_ascii=False)
+
+
+async def _mail_search_action(rest: str) -> str:
+    # $邮件搜索 [槽位=名] [数量] 关键词$ → JSON 数组
+    mod = _get_mail_module()
+    fetch = _mail_require(mod, "fetch_search")
+    brief = _mail_require(mod, "_mail_brief")
+    user, rest = _mail_slot(mod, rest)
+    count = 10
+    head, _, tail = rest.partition(" ")
+    if head.isdigit() and tail.strip():
+        count, rest = int(head), tail.strip()
+    keyword = rest.strip()
+    if not keyword:
+        raise CKError("$邮件搜索$ 格式：$邮件搜索 [槽位=名] [数量] 关键词$")
+    ok, res = await fetch(keyword, count, user)
+    if not ok:
+        raise CKError(f"$邮件搜索$ 失败：{res}")
+    return json.dumps([brief(m) for m in res], ensure_ascii=False)
+
+
+async def _mail_info_action(rest: str) -> str:
+    # $邮箱信息 [槽位=名]$ → JSON（当前槽位/全部槽位/登录状态）
+    mod = _get_mail_module()
+    user, _ = _mail_slot(mod, rest)
+    status = await mod.get_auth_status(user)
+    users = mod.list_users()
+    return json.dumps({
+        "槽位": user, "全部槽位": users,
+        "已登录": bool(status.get("logged_in")),
+        "状态": status.get("status") or ("logged_in" if status.get("logged_in") else "logged_out"),
+    }, ensure_ascii=False)
+
+
+_MAIL_ACTIONS = {
+    "邮件发送": _mail_send_action, "邮件回复": _mail_reply_action,
+    "邮件列表": _mail_list_action, "邮件读取": _mail_read_action,
+    "邮件搜索": _mail_search_action, "邮箱信息": _mail_info_action,
+}
+
+
 def _module_status_json() -> str:
     """$模块状态$ → 各可选模块启用/可用情况 JSON。"""
     pw = _get_module("playwright")
@@ -737,6 +862,7 @@ def _media_actions(sender) -> dict:
         "MySQL查": mysql_query, "MySQL执行": mysql_exec,
         "Redis读": _redis_get_action, "Redis写": _redis_set_action,
         "Redis删": _redis_del_action, "Redis自增": _redis_incr_action,
+        **_MAIL_ACTIONS,
     }
 
 
