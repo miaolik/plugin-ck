@@ -4,18 +4,18 @@
 
 import time
 import json
-import logging
 import re
 from pathlib import Path
 
 import aiohttp
 
 from core.plugin.decorators import handler, on_load
+from core.base.logger import PLUGIN, get_logger, report_error
 
 from .ck_engine import BASE_DIR, DATA_DIR, Ctx, engine, http_timeout
 from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
 
-logger = logging.getLogger("plugin.ck")
+logger = get_logger(PLUGIN, "词库")
 
 __plugin_meta__ = {
     "name": "词库",
@@ -703,9 +703,9 @@ async def ck_forum(event, match):
     if text and ctx.channel_id:
         try:
             await event.sender.send_to_channel(ctx.channel_id, text)
-        except Exception:
-            logger.warning("帖子事件输出发送失败 (block=%s, channel_id=%s)",
-                           block_name, ctx.channel_id, exc_info=True)
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={
+                "phase": "帖子事件输出", "block": block_name, "channel_id": ctx.channel_id})
     return True
 
 
@@ -758,9 +758,9 @@ async def ck_lifecycle(event, match):
                 await event.send_to_group(event.group_id, text)
             elif ctx.user_id and et in ("FRIEND_ADD", "FRIEND_DEL", "GROUP_DEL_ROBOT"):
                 await event.send_to_user(ctx.user_id, text)
-        except Exception:
-            logger.warning("进退事件输出发送失败 (block=%s, event_type=%s)",
-                           block_name, et, exc_info=True)
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={
+                "phase": "进退事件输出", "block": block_name, "event_type": et})
     return True
 
 

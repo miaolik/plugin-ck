@@ -3,12 +3,12 @@
 """词库 Web 编辑器：词库文件管理 / 在线编辑 / 沙盒测试 / 全局变量 / 数据浏览。"""
 
 import json
-import logging
 import re
 from pathlib import Path
 
 from aiohttp import web
 
+from core.base.logger import PLUGIN, get_logger
 from core.plugin.decorators import on_load, on_unload
 from core.plugin.web_pages import register_page, register_route, unregister_page
 
@@ -20,7 +20,7 @@ from .ck_engine import (
 
 PAGE_KEY = "ck-editor"
 
-logger = logging.getLogger("plugin.ck")
+logger = get_logger(PLUGIN, "词库")
 
 _NAME_RE = re.compile(r"^[\w\u4e00-\u9fff\-]{1,64}$")
 
