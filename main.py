@@ -11,7 +11,7 @@ import aiohttp
 
 from core.plugin.decorators import handler, on_load
 
-from .ck_engine import BASE_DIR, DATA_DIR, Ctx, engine, http_timeout
+from .ck_engine import BASE_DIR, DATA_DIR, Ctx, _assert_public_url, engine, http_timeout
 from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
 
 __plugin_meta__ = {
@@ -390,6 +390,7 @@ def _resolve_local_media(path_str: str):
 
 
 async def _download_bytes(url: str):
+    await _assert_public_url(url)
     timeout = aiohttp.ClientTimeout(total=http_timeout())
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as resp:
