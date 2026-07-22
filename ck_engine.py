@@ -109,6 +109,51 @@ async def _assert_public_url(url: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 共享工具：JSON 文件读写 / HTTP 请求 / URL 判断
+# ---------------------------------------------------------------------------
+
+def load_json_dict(path: Path, *, label: str = "") -> Dict:
+    """读取 JSON 文件为 dict；不存在或解析失败返回空 dict。
+
+    label 非空时，内容非对象或读取失败会记一条 warning（否则静默）。"""
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+            if label:
+                logger.warning("%s内容非对象，已忽略: %s", label, path)
+        except (json.JSONDecodeError, OSError) as exc:
+            if label:
+                logger.warning("读取%s失败，改用默认值: %s (%s)", label, path, exc)
+    return {}
+
+
+def save_json_file(path: Path, data, *, indent: Optional[int] = None) -> None:
+    """将数据写入 JSON 文件（自动建目录）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=indent), encoding="utf-8")
+
+
+def is_http_url(url: str) -> bool:
+    return url.startswith(("http://", "https://"))
+
+
+def api_result(ok, data) -> str:
+    """统一的 {"success":..,"data":..} JSON 字符串（QQ 开放平台调用结果）。"""
+    return json.dumps({"success": bool(ok), "data": data}, ensure_ascii=False)
+
+
+async def fetch_bytes(method: str, url: str, *, max_bytes: int,
+                      headers: Optional[Dict[str, str]] = None, **req_kwargs) -> bytes:
+    """按当前 http_timeout() 发起请求并读取至多 max_bytes 字节。"""
+    timeout = aiohttp.ClientTimeout(total=http_timeout())
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        async with session.request(method, url, **req_kwargs) as resp:
+            return await resp.content.read(max_bytes)
+
+
+# ---------------------------------------------------------------------------
 # 解析
 # ---------------------------------------------------------------------------
 
@@ -232,20 +277,11 @@ def store_delete(path: str) -> bool:
 
 
 def settings_load() -> Dict[str, object]:
-    if SETTINGS_FILE.exists():
-        try:
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-            logger.warning("设置文件内容非对象，已忽略: %s", SETTINGS_FILE)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("读取设置文件失败，改用默认设置: %s (%s)", SETTINGS_FILE, exc)
-    return {}
+    return load_json_dict(SETTINGS_FILE, label="设置文件")
 
 
 def settings_save(data: Dict[str, object]) -> None:
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_json_file(SETTINGS_FILE, data, indent=2)
 
 
 def disabled_dicts() -> List[str]:
@@ -278,21 +314,11 @@ def http_timeout() -> int:
 
 
 def globals_load() -> Dict[str, str]:
-    if GLOBAL_FILE.exists():
-        try:
-            data = json.loads(GLOBAL_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return {str(k): str(v) for k, v in data.items()}
-            logger.warning("全局变量文件内容非对象，已忽略: %s", GLOBAL_FILE)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("读取全局变量文件失败，改用空表（保存将覆盖旧内容）: %s (%s)",
-                           GLOBAL_FILE, exc)
-    return {}
+    return {str(k): str(v) for k, v in load_json_dict(GLOBAL_FILE, label="全局变量文件").items()}
 
 
 def globals_save(data: Dict[str, str]) -> None:
-    GLOBAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GLOBAL_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_json_file(GLOBAL_FILE, data, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -301,18 +327,7 @@ def globals_save(data: Dict[str, str]) -> None:
 
 def rank_write(path: str, key: str, member: str, value: str) -> None:
     f = _safe_rel_path(DATA_DIR, path)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    data: Dict[str, List[Dict[str, float]]] = {}
-    if f.exists():
-        try:
-            loaded = json.loads(f.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-            else:
-                logger.warning("排行榜文件内容非对象，将被覆盖: %s", f)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("读取排行榜文件失败，将被覆盖: %s (%s)", f, exc)
-            data = {}
+    data: Dict[str, List[Dict[str, float]]] = load_json_dict(f, label="排行榜文件")
     items = data.setdefault(key, [])
     value = _eval_arith_brackets(value).strip()
     try:
@@ -322,19 +337,12 @@ def rank_write(path: str, key: str, member: str, value: str) -> None:
     items[:] = [it for it in items if list(it.keys()) != [member]]
     items.append({member: int(num) if num == int(num) else num})
     items.sort(key=lambda it: list(it.values())[0], reverse=True)
-    f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_json_file(f, data, indent=2)
 
 
 def rank_read(path: str, key: str, mode: str, index: str) -> str:
     f = _safe_rel_path(DATA_DIR, path)
-    if not f.exists():
-        return ""
-    try:
-        data = json.loads(f.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("读取排行榜文件失败: %s (%s)", f, exc)
-        return ""
-    items = data.get(key) if isinstance(data, dict) else None
+    items = load_json_dict(f, label="排行榜文件").get(key)
     if not isinstance(items, list):
         return ""
     try:
@@ -583,6 +591,16 @@ class Ctx:
     def out(self, kind: str, content: str, extra: str = "") -> None:
         self.outputs.append({"type": kind, "content": content, "extra": extra})
 
+    def child(self, message: str) -> "Ctx":
+        """派生子上下文（$调用$ / $回调$）：复制发送者/会话信息与发送回调。"""
+        return Ctx(message=message, user_id=self.user_id, username=self.username,
+                   group_id=self.group_id, guild_id=self.guild_id, channel_id=self.channel_id,
+                   message_id=self.message_id, appid=self.appid, robot_name=self.robot_name,
+                   avatar=self.avatar, role=self.role, chat_type=self.chat_type,
+                   robot_qq=self.robot_qq, ats=self.ats, images=self.images,
+                   raw_json=self.raw_json, extras=self.extras, send=self.send,
+                   recall=self.recall, actions=self.actions)
+
 
 # ---------------------------------------------------------------------------
 # 引擎
@@ -675,13 +693,7 @@ class CKEngine:
         if not found:
             raise CKError(f"未找到指令: {command}")
         blk, m = found
-        sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
-                  group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
-                  message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
-                  robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
-                  raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
-                  recall=ctx.recall, actions=ctx.actions)
+        sub = ctx.child(command)
         sub.vars.update(ctx.vars)  # 子块可读调用方局部变量
         sub.match = m
         try:
@@ -1212,7 +1224,7 @@ class CKEngine:
                 except json.JSONDecodeError as exc:
                     raise CKError(f"$官方API$ JSON体无效: {exc}")
             ok, result = await action(method, path, payload)
-            return json.dumps({"success": bool(ok), "data": result}, ensure_ascii=False)
+            return api_result(ok, result)
 
         raise CKError(f"未知函数: ${name}$")
 
@@ -1296,7 +1308,7 @@ class CKEngine:
         else:
             raise CKError(f"未知函数: ${name}$")
         ok, result = await api(method, path, payload)
-        return json.dumps({"success": bool(ok), "data": result}, ensure_ascii=False)
+        return api_result(ok, result)
 
     def _text_func(self, name: str, rest: str) -> str:
         sep_and_payload = rest.split(" ", 1)
@@ -1438,11 +1450,9 @@ class CKEngine:
         """内置审核接口（冷曦API）：safe=1 合规，其余不合规。"""
         url = self._ELAINA_CENSOR_URL + "?text=" + urllib.parse.quote_plus(text)
         try:
-            timeout = aiohttp.ClientTimeout(total=http_timeout())
-            async with aiohttp.ClientSession(timeout=timeout,
-                                             headers={"User-Agent": self._ELAINA_UA}) as session:
-                async with session.get(url) as resp:
-                    body = (await resp.content.read(HTTP_MAX_BYTES)).decode("utf-8", errors="replace")
+            raw = await fetch_bytes("GET", url, max_bytes=HTTP_MAX_BYTES,
+                                    headers={"User-Agent": self._ELAINA_UA})
+            body = raw.decode("utf-8", errors="replace")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise CKError(f"$内容审核$ 内置接口访问失败: {exc}")
         try:
@@ -1495,20 +1505,17 @@ class CKEngine:
                           ensure_ascii=False)
 
     async def _http_get(self, url: str) -> str:
-        if not url.startswith(("http://", "https://")):
+        if not is_http_url(url):
             raise CKError(f"$访问$ URL 无效: {url}")
         await _assert_public_url(url)
         try:
-            timeout = aiohttp.ClientTimeout(total=http_timeout())
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
-                    body = await resp.content.read(HTTP_MAX_BYTES)
-                    return body.decode("utf-8", errors="replace")
+            body = await fetch_bytes("GET", url, max_bytes=HTTP_MAX_BYTES)
+            return body.decode("utf-8", errors="replace")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise CKError(f"$访问$ 失败: {exc}")
 
     async def _http_post(self, url: str, data: str) -> str:
-        if not url.startswith(("http://", "https://")):
+        if not is_http_url(url):
             raise CKError(f"$POST访问$ URL 无效: {url}")
         await _assert_public_url(url)
         kwargs: Dict[str, object] = {}
@@ -1521,25 +1528,19 @@ class CKEngine:
         elif data:
             kwargs["data"] = dict(urllib.parse.parse_qsl(data)) or data
         try:
-            timeout = aiohttp.ClientTimeout(total=http_timeout())
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, **kwargs) as resp:
-                    body = await resp.content.read(HTTP_MAX_BYTES)
-                    return body.decode("utf-8", errors="replace")
+            body = await fetch_bytes("POST", url, max_bytes=HTTP_MAX_BYTES, **kwargs)
+            return body.decode("utf-8", errors="replace")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise CKError(f"$POST访问$ 失败: {exc}")
 
     async def _download(self, local_path: str, url: str) -> str:
-        if not url.startswith(("http://", "https://")):
+        if not is_http_url(url):
             raise CKError(f"$下载$ URL 无效: {url}")
         await _assert_public_url(url)
         target = _safe_rel_path(DATA_DIR, local_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            timeout = aiohttp.ClientTimeout(total=http_timeout())
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
-                    content = await resp.content.read(20 * 1024 * 1024)
+            content = await fetch_bytes("GET", url, max_bytes=20 * 1024 * 1024)
             target.write_bytes(content)
             return ""
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
@@ -1547,13 +1548,7 @@ class CKEngine:
 
     async def _delayed_call(self, delay: float, command: str, ctx: Ctx, depth: int) -> None:
         await asyncio.sleep(delay)
-        sub = Ctx(message=command, user_id=ctx.user_id, username=ctx.username,
-                  group_id=ctx.group_id, guild_id=ctx.guild_id, channel_id=ctx.channel_id,
-                  message_id=ctx.message_id, appid=ctx.appid, robot_name=ctx.robot_name,
-                  avatar=ctx.avatar, role=ctx.role, chat_type=ctx.chat_type,
-                  robot_qq=ctx.robot_qq, ats=ctx.ats, images=ctx.images,
-                  raw_json=ctx.raw_json, extras=ctx.extras, send=ctx.send,
-                  recall=ctx.recall, actions=ctx.actions)
+        sub = ctx.child(command)
         try:
             await self.run_command(command, sub, depth)
         except CKError as exc:
