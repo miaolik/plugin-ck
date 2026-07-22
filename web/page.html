@@ -196,8 +196,9 @@ i:[%i%+1]
       <span class="snip">跳出</span>
       <span class="snip">继续</span>
       <span class="snip">返回</span>
+      <span class="snip">跳转:3</span>
       <p>条件支持 <code>==</code> <code>!=</code> <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code>；<code>[算式]</code> 支持 + - * / % 和括号。</p>
-      <p><code>循环遍历:数据 项变量 序变量</code>（单字符变量名，序变量可省）遍历 JSON 数组/对象（序=键）/逗号文本；循环内 <code>跳出</code>=break、<code>继续</code>=continue。</p>
+      <p><code>循环遍历:数据 项变量 序变量</code>（单字符变量名，序变量可省）遍历 JSON 数组/对象（序=键）/逗号文本；循环内 <code>跳出</code>=break、<code>继续</code>=continue。<code>跳转:行号</code> 跳到本层第 N 行（1 起，指令行不计）继续执行，行号可用变量；配合 <code>如果</code> 可实现条件跳转，向后跳可实现类 goto 循环（有执行步数上限保护）。</p>
       <h4>发送消息</h4>
       <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±文本±</span><span class="snip">±无后缀±</span><span class="snip">±自动撤回=10±</span><span class="snip">±ark=23|描述|提示|纯文字行|文字行;链接±</span><span class="snip">±ark=24|提示|标题|副标题|描述|图片URL|跳转URL|图片副标题±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span><span class="snip">$MD图片 图片URL 120 120$</span><span class="snip">$MD代码 语言=python 内容$</span><span class="snip">$MD表格 @ 表头1|表头2@a|b@c|d$</span><span class="snip">$渲染 800x600 https://网页URL$</span><span class="snip">$画图 文字或HTML片段$</span><span class="snip">$图床频道 子频道ID$</span><span class="snip">$图床 图片URL$</span><span class="snip">$MD图床 图片URL$</span>
       <p><code>±md±</code> 出现后整条消息按 Markdown 发送；块内所有文本片段（标题/加粗/多张 <code>$MD图片$</code>/<code>$MD代码$</code> 代码框/<code>$MD表格$</code> 表格/引用行等）会<b>合并成一条原生 MD 消息</b>发出，<code>±btn=±</code> 按钮也挂在同一条上（实测见内置词库「示例MD」）。配合 <code>$MD图片 URL [宽 高]$</code>（生成 <code>![img #宽px #高px](URL)</code>，可在一条消息里发多张图，不填宽高时自动下载图片读取尺寸）、<code>$MD代码 [语言=xxx] 内容$</code>（生成代码框，内容中 <code>\n</code> 为换行）与 <code>$MD表格 @ 表头1|表头2@a|b@c|d$</code>（生成表格，首参为行分隔符）可组合多图/代码框/表格消息；<code>$渲染 [宽x高] URL$</code> / <code>$渲染 [宽x高] html HTML内容$</code> 用框架 Playwright 渲染模块截图，<code>$画图 [宽x高] 文字或HTML片段$</code> 把文字画成卡片图，两者都返回本地图片路径（配合 <code>±img=%变%±</code> 发送，需启用 Playwright 模块）；<code>$图床 图片URL$</code> 把图片备份到图床子频道（先用 <code>$图床频道 子频道ID$</code> 设置）并返回 gchat.qpic.cn 永久链接，<code>$MD图床 图片URL [宽 高]$</code> 转链+自动读尺寸直接返回 MD 图片片段（MD 消息发图推荐用图床链接）；<code>±文本±</code> 强制纯文本（markdown 语法原样显示）；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 本次发出的消息 N 秒后自动撤回；<code>±ark=类型|参数...±</code> 支持卡片：23 链接列表（描述|提示|项目|项目…，项目写 <code>文字;链接</code> 带跳转、只写文字为纯文本行）、24 大图文卡片（提示|标题|副标题|描述|图片URL|跳转URL|图片副标题）、37 小图文卡片（提示|标题|副标题|图片URL|跳转URL），实例见内置词库「示例ARK」；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、以&gt;开头=普通指令按钮（点击后以用户身份直接发送该指令）、其余=回调），<code>±小按钮=...±</code> 同语法但字号更小；<code>\n</code> 或 <code>\r</code> 为换行。</p>
@@ -391,7 +392,7 @@ $MD表格 @ 名次|昵称@1|甲@2|乙$
       <div class="copy-block">ark测试
 ±ark=37|提示文字|大标题|副标题|https://q.qlogo.cn/qqapp/%robot%/%ID%/640|±</div>
       <h4>循环 / 循环遍历</h4>
-      <p><code>循环:条件</code>…<code>结束</code> 条件循环；<code>循环遍历:数据 项变量 序变量</code>…<code>结束</code> 遍历 JSON 数组/对象（序变量=键）/逗号分隔文本（单字符变量名，序变量可省略）；循环内 <code>跳出</code>=break、<code>继续</code>=continue。<code>$读键列表 路径$</code> 返回配置文件全部键名（JSON 数组），<code>$数组长 数据$</code> 返回长度。</p>
+      <p><code>循环:条件</code>…<code>结束</code> 条件循环；<code>循环遍历:数据 项变量 序变量</code>…<code>结束</code> 遍历 JSON 数组/对象（序变量=键）/逗号分隔文本（单字符变量名，序变量可省略）；循环内 <code>跳出</code>=break、<code>继续</code>=continue；<code>跳转:行号</code> 跳到本层第 N 行继续执行（配合 <code>如果</code> 条件跳转）。<code>$读键列表 路径$</code> 返回配置文件全部键名（JSON 数组），<code>$数组长 数据$</code> 返回长度。</p>
       <div class="copy-block">报数
 i:0
 循环:%i%<5

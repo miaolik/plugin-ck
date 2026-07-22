@@ -777,6 +777,14 @@ class CKEngine:
             if raw == "继续":
                 raise ContinueSignal()
 
+            if raw.startswith("跳转:") or raw.startswith("跳转："):
+                # 跳转:行号 —— 跳到本层第 N 行（1 起）继续执行，配合 如果 可实现条件跳转
+                target = (await self._expand(raw[3:], ctx, depth)).strip()
+                if not target.isdigit() or not (1 <= int(target) <= n):
+                    raise CKError(f"跳转 行号无效: {target}（本层共 {n} 行）")
+                i = int(target) - 1
+                continue
+
             if raw.startswith("如果:") or raw.startswith("如果："):
                 cond_src = raw[3:]
                 cond = await self._expand(cond_src, ctx, depth)

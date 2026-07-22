@@ -317,6 +317,45 @@ async def test_call_func_delete_and_keys(tmp_path, monkeypatch):
     assert await eng._call_func("读 f.txt a def", ctx, 0) == "def"
 
 
+def test_goto_forward_skips_lines():
+    eng = make_engine(
+        "测\n"
+        "A\n"
+        "跳转:4\n"
+        "B\n"
+        "C\n"
+    )
+    text, _ = run(eng, "测")
+    assert text == "AC"
+
+
+def test_goto_backward_with_condition_loops():
+    eng = make_engine(
+        "测\n"
+        "i:0\n"
+        "i:[%i%+1]\n"
+        "第%i%次\\n\n"
+        "如果:%i%<3\n"
+        "跳转:2\n"
+        "如果尾\n"
+        "完\n"
+    )
+    text, _ = run(eng, "测")
+    assert text == "第1次\n第2次\n第3次\n完"
+
+
+def test_goto_invalid_line_reports_error():
+    eng = make_engine("测\nA\n跳转:99\nB")
+    _, ctx = run(eng, "测")
+    assert any("跳转 行号无效" in e for e in ctx.errors)
+
+
+def test_goto_infinite_loop_guard():
+    eng = make_engine("测\nA\n跳转:1")
+    _, ctx = run(eng, "测")
+    assert any("执行步数超限" in e for e in ctx.errors)
+
+
 def test_md_combined_formats_single_message():
     """±md± 块内标题/多图/代码框/表格/引用合并成一个文本片段（一条 MD 消息），按钮独立挂载。"""
     eng = make_engine(
