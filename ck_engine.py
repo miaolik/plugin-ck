@@ -1370,6 +1370,28 @@ class CKEngine:
                 return json.dumps({"data": data, "errorMsg": "", "status": len(data)}, ensure_ascii=False)
             except sqlite3.Error as exc:
                 return json.dumps({"data": None, "errorMsg": str(exc), "status": -1}, ensure_ascii=False)
+        if action in ("执行SQLP", "查询SQLP"):
+            # 参数化 SQL：$数据库 执行SQLP 名 @ SQL@值1@值2$，SQL 内用 ? 占位，
+            # 值以 sqlite 参数绑定传入，杜绝把变量拼进 SQL 造成的注入
+            sub = payload.split(" ", 1)
+            if len(sub) != 2:
+                raise CKError(f"$数据库 {action}$ 格式：$数据库 {action} 名 分隔符 SQL分隔符值...$")
+            sep, body = sub
+            parts = body.split(sep)
+            sql, params = parts[0], [p.strip() for p in parts[1:]]
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    if action == "查询SQLP":
+                        conn.row_factory = sqlite3.Row
+                        rows = conn.execute(sql, params).fetchall()
+                        data = [dict(r) for r in rows]
+                        return json.dumps({"data": data, "errorMsg": "", "status": len(data)},
+                                          ensure_ascii=False)
+                    conn.execute(sql, params)
+                    conn.commit()
+                return json.dumps({"data": None, "errorMsg": "", "status": 0}, ensure_ascii=False)
+            except (sqlite3.Error, sqlite3.Warning) as exc:
+                return json.dumps({"data": None, "errorMsg": str(exc), "status": -1}, ensure_ascii=False)
         raise CKError(f"$数据库$ 不支持: {action}")
 
     # 百度云文本审核：access_token 缓存 (token, 过期时间戳)
