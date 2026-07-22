@@ -181,6 +181,73 @@ def test_parse_buttons_types(main_mod):
     ]
 
 
+def test_redis_actions(main_mod, monkeypatch):
+    import asyncio
+
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+            self.last_set = None
+
+        async def get(self, key):
+            return self.store.get(key)
+
+        async def set(self, key, value, ex=None):
+            self.store[key] = value
+            self.last_set = (key, value, ex)
+
+        async def delete(self, key):
+            return 1 if self.store.pop(key, None) is not None else 0
+
+        async def incr(self, key, amount=1):
+            self.store[key] = int(self.store.get(key, 0)) + amount
+            return self.store[key]
+
+    fake = FakeRedis()
+    monkeypatch.setattr(main_mod, "_redis_pool", lambda: fake)
+
+    async def go():
+        assert await main_mod._redis_get_action("k 默认") == "默认"
+        await main_mod._redis_set_action("k 秒=60 值 带 空格")
+        assert fake.last_set == ("k", "值 带 空格", 60)
+        await main_mod._redis_set_action("k2 普通值")
+        assert fake.last_set == ("k2", "普通值", None)
+        assert await main_mod._redis_get_action("k") == "值 带 空格"
+        assert await main_mod._redis_incr_action("n 5") == "5"
+        assert await main_mod._redis_incr_action("n") == "6"
+        assert await main_mod._redis_del_action("k") == "1"
+
+    asyncio.run(go())
+
+
+def test_mysql_actions(main_mod, monkeypatch):
+    import asyncio
+
+    class FakeMySQL:
+        async def fetch_all(self, sql, params=None):
+            assert sql == "SELECT 1 AS a"
+            return [{"a": 1}]
+
+        async def execute(self, sql, params=None):
+            return 3
+
+    monkeypatch.setattr(main_mod, "_mysql_pool", lambda: FakeMySQL())
+
+    async def go():
+        assert await main_mod._mysql_query_action("SELECT 1 AS a") == '[{"a": 1}]'
+        assert await main_mod._mysql_exec_action("UPDATE t SET x=1") == "3"
+
+    asyncio.run(go())
+
+
+def test_module_status_json(main_mod, monkeypatch):
+    monkeypatch.setattr(main_mod, "_get_module", lambda name: None)
+    status = json.loads(main_mod._module_status_json())
+    assert status["playwright"] is False
+    assert status["datastore"]["mysql"] is False
+    assert status["onebot_adapter"] is False
+
+
 def test_split_viewport(main_mod):
     assert main_mod._split_viewport("800x600 https://x") == ((800, 600), "https://x")
     assert main_mod._split_viewport("1280*720 html <h1>hi</h1>") == ((1280, 720), "html <h1>hi</h1>")

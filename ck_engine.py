@@ -1196,7 +1196,10 @@ class CKEngine:
                 return f"![img #{size[0]}px #{size[1]}px]({url})"
             return f"![img]({url})"
 
-        if name in ("渲染", "画图", "图床", "MD图床"):
+        if name in ("渲染", "画图", "图床", "MD图床",
+                    "上传图床", "图床状态", "模块状态",
+                    "MySQL查", "MySQL执行",
+                    "Redis读", "Redis写", "Redis删", "Redis自增"):
             action = ctx.actions.get(name)
             if not action:
                 raise CKError(f"${name}$ 当前环境不支持")
