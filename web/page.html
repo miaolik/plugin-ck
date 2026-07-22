@@ -180,8 +180,8 @@ i:[%i%+1]
       <p>条件支持 <code>==</code> <code>!=</code> <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code>；<code>[算式]</code> 支持 + - * / % 和括号。</p>
       <p><code>循环遍历:数据 项变量 序变量</code>（单字符变量名，序变量可省）遍历 JSON 数组/对象（序=键）/逗号文本；循环内 <code>跳出</code>=break、<code>继续</code>=continue。</p>
       <h4>发送消息</h4>
-      <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±文本±</span><span class="snip">±无后缀±</span><span class="snip">±自动撤回=10±</span><span class="snip">±ark=23|描述|提示|纯文字行|文字行;链接±</span><span class="snip">±ark=24|提示|标题|副标题|描述|图片URL|跳转URL|图片副标题±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span>
-      <p><code>±md±</code> 出现后整条消息按 Markdown 发送；<code>±文本±</code> 强制纯文本（markdown 语法原样显示）；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 本次发出的消息 N 秒后自动撤回；<code>±ark=类型|参数...±</code> 支持卡片：23 链接列表（描述|提示|项目|项目…，项目写 <code>文字;链接</code> 带跳转、只写文字为纯文本行）、24 大图文卡片（提示|标题|副标题|描述|图片URL|跳转URL|图片副标题）、37 小图文卡片（提示|标题|副标题|图片URL|跳转URL），实例见内置词库「示例ARK」；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调），<code>±小按钮=...±</code> 同语法但字号更小；<code>\n</code> 或 <code>\r</code> 为换行。</p>
+      <span class="snip">±img=图片URL或本地路径±</span><span class="snip">±video=视频URL±</span><span class="snip">±voice=语音URL±</span><span class="snip">±file=文件路径±</span><span class="snip">±at=%ID%±</span><span class="snip">±md±</span><span class="snip">±文本±</span><span class="snip">±无后缀±</span><span class="snip">±自动撤回=10±</span><span class="snip">±ark=23|描述|提示|纯文字行|文字行;链接±</span><span class="snip">±ark=24|提示|标题|副标题|描述|图片URL|跳转URL|图片副标题±</span><span class="snip">±ark=37|提示|标题|副标题|图片URL|跳转URL±</span><span class="snip">$MD图片 图片URL 120 120$</span><span class="snip">$MD代码 语言=python 内容$</span>
+      <p><code>±md±</code> 出现后整条消息按 Markdown 发送，配合 <code>$MD图片 URL [宽 高]$</code>（生成 <code>![img #宽px #高px](URL)</code>，可在一条消息里发多张图）与 <code>$MD代码 [语言=xxx] 内容$</code>（生成代码框，内容中 <code>\n</code> 为换行）可组合多图/代码框消息；<code>±文本±</code> 强制纯文本（markdown 语法原样显示）；<code>±无后缀±</code> 跳过全局 markdown 后缀；<code>±自动撤回=秒±</code> 本次发出的消息 N 秒后自动撤回；<code>±ark=类型|参数...±</code> 支持卡片：23 链接列表（描述|提示|项目|项目…，项目写 <code>文字;链接</code> 带跳转、只写文字为纯文本行）、24 大图文卡片（提示|标题|副标题|描述|图片URL|跳转URL|图片副标题）、37 小图文卡片（提示|标题|副标题|图片URL|跳转URL），实例见内置词库「示例ARK」；<code>±引用±</code> 本条回复引用触发者消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、以&gt;开头=普通指令按钮（点击后以用户身份直接发送该指令）、其余=回调），<code>±小按钮=...±</code> 同语法但字号更小；<code>\n</code> 或 <code>\r</code> 为换行。</p>
       <h4>主动消息 / 召回 / 成员 / 邀请链接</h4>
       <span class="snip">$主动私聊 %ID% 内容$</span><span class="snip">$主动群发 %群ID% 内容$</span><span class="snip">$召回 %ID% 内容$</span><span class="snip">$强制召回 %ID% 内容$</span><span class="snip">$群成员 %ID%$</span><span class="snip">$机器人成员$</span><span class="snip">$邀请链接$</span><span class="snip">$官方API GET /路径$</span>
       <p><code>$主动私聊/主动群发$</code> 不回复当前消息而直接向目标发送（配合 <code>$调用 毫秒 指令$</code> 可延迟发送）；<code>$群成员 ID$</code>/<code>$机器人成员$</code> 返回成员 JSON，用 <code>@%变% [字段]</code> 取值；<code>$邀请链接 可选数据$</code> 生成专属邀请链接；<code>$官方API 方法 /路径 JSON体$</code> 用框架凭证直调 QQ 开放平台接口。以上仅真实消息环境可用，Web 沙盒测试会提示不支持。</p>
@@ -301,12 +301,12 @@ AT数量：%AT数量%　图片数量：%图片数量%
 图片地址：%IMG0%
 ±img=%IMG0%±</div>
       <h4>引用 / 按钮 / 撤回</h4>
-      <p><code>±引用±</code> 本条回复引用触发者的消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、其余=回调，回调按钮点击后其 data 会作为触发词再次触发词库）；<code>$撤回$</code>/<code>$撤回 消息ID$</code> 撤回消息。</p>
+      <p><code>±引用±</code> 本条回复引用触发者的消息；<code>±btn=文本;值|文本;值^下一行±</code> 消息按钮（值为URL=链接、以/开头=填入输入框、以&gt;开头=普通指令按钮（点击后以用户身份直接发送该指令，会在消息列表显示）、其余=回调，回调按钮点击后其 data 会作为触发词再次触发词库且消息列表不显示）；<code>$撤回$</code>/<code>$撤回 消息ID$</code> 撤回消息。</p>
       <div class="copy-block">引用测试
 ±引用±收到你的消息啦</div>
       <div class="copy-block">菜单
 请选择功能：
-±btn=签到;签到|抽奖;抽奖^官网;https://example.com|帮助;/帮助±</div>
+±btn=签到;签到|普通按钮;>签到^官网;https://example.com|帮助;/帮助±</div>
       <div class="copy-block">撤回测试
 $撤回$
 已撤回你刚才的消息</div>
@@ -353,13 +353,15 @@ $全局写 公告 %括号1%$
 看公告
 当前公告：%全局.公告%</div>
       <h4>多媒体 / Markdown / ARK</h4>
-      <p><code>±img=URL或本地路径±</code> 图片；<code>±voice=URL±</code> 语音；<code>±video=URL±</code> 视频；<code>±file=URL或本地路径±</code> 文件；<code>±md±</code> 本条按 Markdown 发送；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片。</p>
+      <p><code>±img=URL或本地路径±</code> 图片；<code>±voice=URL±</code> 语音；<code>±video=URL±</code> 视频；<code>±file=URL或本地路径±</code> 文件；<code>±md±</code> 本条按 Markdown 发送（<code>$MD图片 URL [宽 高]$</code> 多图、<code>$MD代码 [语言=xxx] 内容$</code> 代码框）；<code>±ark=类型|参数...±</code> 支持 23/24/37 卡片。</p>
       <div class="copy-block">发图
 ±img=https://q.qlogo.cn/qqapp/%robot%/%ID%/640±</div>
       <div class="copy-block">md测试
 ±md±**加粗** *斜体*
 > 引用行
-[链接](https://example.com)</div>
+[链接](https://example.com)
+$MD图片 %头像% 120 120$
+$MD代码 语言=python print("hi")$</div>
       <div class="copy-block">ark测试
 ±ark=37|提示文字|大标题|副标题|https://q.qlogo.cn/qqapp/%robot%/%ID%/640|±</div>
       <h4>循环 / 循环遍历</h4>

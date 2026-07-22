@@ -1142,6 +1142,25 @@ class CKEngine:
         if name == "URLDecoder":
             return urllib.parse.unquote(rest)
 
+        if name == "MD图片":
+            # $MD图片 URL [宽 高]$ → Markdown 图片语法，可在一条 ±md± 消息里放多张
+            args = rest.split()
+            if not args or not args[0]:
+                raise CKError("$MD图片$ 格式：$MD图片 URL [宽 高]$")
+            url = args[0]
+            if len(args) >= 3 and args[1].isdigit() and args[2].isdigit():
+                return f"![img #{args[1]}px #{args[2]}px]({url})"
+            return f"![img]({url})"
+        if name == "MD代码":
+            # $MD代码 内容$ / $MD代码 语言=python 内容$ → Markdown 代码框
+            lang = ""
+            content = rest
+            if content.startswith("语言="):
+                head, _, tail = content.partition(" ")
+                lang, content = head[3:], tail
+            content = content.replace("\\n", "\n").replace("\\r", "\n")
+            return f"```{lang}\n{content}\n```"
+
         if name == "排行榜写":
             args = rest.split()
             if len(args) != 4:

@@ -191,6 +191,18 @@ async def test_call_func_is_number():
     assert await call("是否为数字 abc") == "false"
 
 
+async def test_call_func_md_image():
+    assert await call("MD图片 http://a/1.png 120 60") == "![img #120px #60px](http://a/1.png)"
+    assert await call("MD图片 http://a/1.png") == "![img](http://a/1.png)"
+    with pytest.raises(CKError):
+        await call("MD图片 ")
+
+
+async def test_call_func_md_code():
+    assert await call("MD代码 print(1)") == "```\nprint(1)\n```"
+    assert await call("MD代码 语言=python a\\nb") == "```python\na\nb\n```"
+
+
 async def test_call_func_url_encode_decode():
     assert await call("URLEncoder a b") == "a%20b"
     assert await call("URLDecoder a%20b") == "a b"
