@@ -70,6 +70,11 @@ def ckweb_mod():
 
 
 @pytest.fixture
+def cron_mod():
+    return _plugin_module("ck_cron")
+
+
+@pytest.fixture
 def data_dir(tmp_path, monkeypatch):
     """把 ck_engine 内所有数据路径常量指向临时目录。
 
