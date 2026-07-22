@@ -231,9 +231,11 @@ i:[%i%+1]
       <h4>调用 / 回调 / 内部指令 / 定时任务</h4>
       <span class="snip">$调用 2000 指令名$</span><span class="snip">$回调 指令名$</span><span class="snip">[内部]指令名</span><span class="snip">$定时添加 早报 0 8 * * * 早报推送$</span><span class="snip">$定时删除 早报$</span><span class="snip">$定时开关 早报 0$</span><span class="snip">$定时列表$</span>
       <p>调用：延迟 N 毫秒后触发指令并单独发送；回调：只能触发 <code>[内部]</code> 指令且输出合并到当前消息。定时任务：<code>$定时添加 名字 分 时 日 月 周 指令$</code> 新建 cron 任务（cron 支持 <code>*</code> <code>*/n</code> <code>a-b</code> <code>a,b</code>，周 0/7=周日），到点以创建时所在会话为目标触发指令，文本输出主动发回该会话，块内可用 <code>$主动群发/主动私聊/发帖/访问/官方API$</code> 等实现定时推送/定时调 API；任务持久化在 data/定时任务.json，重启自动恢复；需在真实消息环境中添加（沙盒不支持）。</p>
-      <h4>框架模块对接（MySQL / Redis / 图床服务）</h4>
+      <h4>框架模块对接（MySQL / Redis / 图床服务 / 邮箱插件）</h4>
       <span class="snip">$MySQL查 SELECT * FROM 表$</span><span class="snip">$MySQL执行 UPDATE 表 SET x=1$</span><span class="snip">$Redis读 键 默认值$</span><span class="snip">$Redis写 键 秒=60 值$</span><span class="snip">$Redis删 键$</span><span class="snip">$Redis自增 签到:%ID%$</span><span class="snip">$上传图床 qq %IMG0%$</span><span class="snip">$图床状态$</span><span class="snip">$模块状态$</span>
       <p>需在框架模块页启用对应模块：<code>$MySQL查$</code> 返回 JSON 数组（配合 <code>@%变% [字段]</code> / 循环遍历），<code>$MySQL执行$</code> 返回影响行数（需数据存储引擎开启 mysql_enabled）；<code>$Redis读/写/删/自增$</code> 直连 Redis，写可带 <code>秒=N</code> 过期，自增返回自增后的值（需开启 redis_enabled）；<code>$上传图床 [类型] 图片URL或本地路径$</code> 通过「图床服务」模块上传并返回外链，类型 <code>qq/cos/bilibili/chatglm/ukaka/xingye/nature</code>（默认 qq，需在模块配置中开启对应图床）；<code>$图床状态$</code>/<code>$模块状态$</code> 返回可用状态 JSON（OneBot 适配器在框架层转发消息，词库回复自动同步推送，无需额外配置）。</p>
+      <span class="snip">$邮件发送 收件人|主题|正文$</span><span class="snip">$邮件回复 邮件ID|正文$</span><span class="snip">$邮件列表 10 收件箱$</span><span class="snip">$邮件读取 邮件ID$</span><span class="snip">$邮件搜索 10 关键词$</span><span class="snip">$邮箱信息$</span>
+      <p>邮箱能力对接：需先安装并加载 Agently 邮箱插件（plugin-yx）。<code>$邮件发送$</code> 多收件人逗号分隔，返回发送结果；<code>$邮件列表/邮件搜索$</code> 返回 JSON 数组（配合 <code>@%变% [字段]</code> / 循环遍历），文件夹支持 收件箱/已发送/回收站/垃圾邮件；<code>$邮件读取$</code> 返回单封邮件 JSON（subject/sender/to/date/body/attachments）；<code>$邮箱信息$</code> 返回槽位与登录状态。全部函数支持可选 <code>槽位=名</code> 前缀指定邮箱账号槽位，缺省用邮箱插件当前槽位。</p>
       <h4>初始化块</h4>
       <span class="snip">#INITROBOT#
 $数据库 声明 示例 测试.db$</span>

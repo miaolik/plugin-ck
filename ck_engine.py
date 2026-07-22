@@ -1207,7 +1207,9 @@ class CKEngine:
         if name in ("渲染", "画图", "图床", "MD图床",
                     "上传图床", "图床状态", "模块状态",
                     "MySQL查", "MySQL执行",
-                    "Redis读", "Redis写", "Redis删", "Redis自增"):
+                    "Redis读", "Redis写", "Redis删", "Redis自增",
+                    "邮件发送", "邮件回复", "邮件列表",
+                    "邮件读取", "邮件搜索", "邮箱信息"):
             action = ctx.actions.get(name)
             if not action:
                 raise CKError(f"${name}$ 当前环境不支持")
