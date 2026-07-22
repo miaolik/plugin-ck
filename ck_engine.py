@@ -1780,7 +1780,7 @@ class CKEngine:
             elif kind == "小按钮":
                 ctx.out("buttons_small", value)
             elif kind in ("引用", "quote"):
-                ctx.out("quote", "")
+                ctx.out("quote", value)
             pos = m.end()
         tail = text[pos:]
         if tail:

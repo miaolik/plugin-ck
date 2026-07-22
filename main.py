@@ -252,7 +252,7 @@ def _event_extras(event, bot_role: str = "") -> dict:
         "会话ID": chat_id, "ChatId": chat_id,
         "消息时间": timestamp, "时间戳": timestamp,
         "事件类型": event_type, "EventType": event_type,
-        "引用ID": ref_id, "REFIDX": ref_id,
+        "引用ID": ref_id, "引用消息ID": ref_id, "REFIDX": ref_id,
         "是否艾特机器人": at_self, "IsAtSelf": at_self,
         "机器人身份": bot_role, "BotMemberRole": bot_role,
         "消息来源": scene_source,
@@ -913,7 +913,7 @@ async def send_outputs(event, outputs, md_mode, *, text_mode=False,
             if parsed:
                 small_rows = (small_rows or []) + parsed["rows"]
         elif seg["type"] == "quote":
-            quote_ref = getattr(event, "message_reference_id", "") or ""
+            quote_ref = seg.get("content", "").strip() or getattr(event, "message_reference_id", "") or ""
     if small_rows:
         buttons = {"rows": (buttons or []) + small_rows, "font_size": "small"}
     delete_after = auto_delete if auto_delete > 0 else None
