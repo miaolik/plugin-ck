@@ -94,7 +94,7 @@ async def api_dicts(request):
 async def api_dict_get(request):
     name = request.query.get("name", "")
     path, err = _dict_path_or_err(name)
-    if err:
+    if err is not None:
         return err
     if not path.exists():
         return _err("词库不存在", 404)
@@ -104,12 +104,12 @@ async def api_dict_get(request):
 @register_route("POST", "/api/ext/ck/dict/save")
 async def api_dict_save(request):
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     name = str(body.get("name", "")).strip()
     content = str(body.get("content", ""))
     path, err = _dict_path_or_err(name)
-    if err:
+    if err is not None:
         return err
     DICT_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -120,13 +120,13 @@ async def api_dict_save(request):
 @register_route("POST", "/api/ext/ck/dict/rename")
 async def api_dict_rename(request):
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     old, err = _dict_path_or_err(str(body.get("name", "")).strip())
-    if err:
+    if err is not None:
         return err
     new, err = _dict_path_or_err(str(body.get("new_name", "")).strip())
-    if err:
+    if err is not None:
         return err
     if not old.exists():
         return _err("词库不存在", 404)
@@ -140,10 +140,10 @@ async def api_dict_rename(request):
 @register_route("POST", "/api/ext/ck/dict/delete")
 async def api_dict_delete(request):
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     path, err = _dict_path_or_err(str(body.get("name", "")).strip())
-    if err:
+    if err is not None:
         return err
     if not path.exists():
         return _err("词库不存在", 404)
@@ -155,11 +155,11 @@ async def api_dict_delete(request):
 @register_route("POST", "/api/ext/ck/dict/toggle")
 async def api_dict_toggle(request):
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     name = str(body.get("name", ""))
     path, err = _dict_path_or_err(name)
-    if err:
+    if err is not None:
         return err
     if not path.exists():
         return _err("词库不存在", 404)
@@ -179,7 +179,7 @@ async def api_reload(request):
 async def api_test(request):
     """沙盒测试：模拟一条消息触发词库，返回输出片段（不真正发送）。"""
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     message = str(body.get("message", "")).strip()
     if not message:
@@ -203,7 +203,7 @@ async def api_test(request):
 async def api_censor_test(request):
     """内容审核测试连通：可先保存百度密钥（留空则用内置接口），再实际调用一次审核。"""
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     key = str(body.get("baidu_key", "") or "").strip()
     secret = str(body.get("baidu_secret", "") or "").strip()
@@ -239,7 +239,7 @@ async def api_settings_get(request):
 @register_route("POST", "/api/ext/ck/settings")
 async def api_settings_save(request):
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     try:
         value = int(body.get("http_timeout", DEFAULT_HTTP_TIMEOUT))
@@ -261,7 +261,7 @@ async def api_globals_get(request):
 @register_route("POST", "/api/ext/ck/globals")
 async def api_globals_save(request):
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     data = body.get("globals")
     if not isinstance(data, dict):
@@ -284,7 +284,7 @@ async def api_data_list(request):
 async def api_data_content(request):
     rel = request.query.get("path", "")
     target, err = _safe_data_target(rel)
-    if err:
+    if err is not None:
         return err
     if target.stat().st_size > 512 * 1024:
         return _err("文件过大，无法预览")
@@ -298,11 +298,11 @@ async def api_data_content(request):
 @register_route("POST", "/api/ext/ck/data/delete")
 async def api_data_delete(request):
     body, err = await _json_body(request)
-    if err:
+    if err is not None:
         return err
     rel = str(body.get("path", ""))
     target, err = _safe_data_target(rel)
-    if err:
+    if err is not None:
         return err
     target.unlink()
     return _ok(message="已删除")
