@@ -11,7 +11,10 @@ import aiohttp
 
 from core.plugin.decorators import handler, on_load
 
-from .ck_engine import BASE_DIR, DATA_DIR, Ctx, engine, http_timeout
+from .ck_engine import (
+    BASE_DIR, DATA_DIR, Ctx, engine, fetch_bytes,
+    is_http_url, load_json_dict, save_json_file,
+)
 from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
 
 __plugin_meta__ = {
@@ -32,6 +35,17 @@ def _get_bot(appid):
         return None
 
 
+def _event_d(event) -> dict:
+    """事件原始数据里的 d 段（QQ 开放平台事件体），缺失时返回空 dict。"""
+    return (getattr(event, "raw", None) or {}).get("d") or {}
+
+
+def _append_errors(ctx) -> None:
+    """把本次运行收集到的错误以 ⚠ 前缀附加到文本输出末尾。"""
+    if ctx.errors:
+        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+
+
 _BOT_ROLE_CACHE: dict = {}  # (appid, group_id) -> (role, expire_ts)
 _BOT_ROLE_TTL = 300
 
@@ -45,13 +59,7 @@ _MEMBERS_SAVE_INTERVAL = 30
 
 def _members_load() -> None:
     global _members_cache
-    if _MEMBERS_FILE.exists():
-        try:
-            data = json.loads(_MEMBERS_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                _members_cache = data
-        except (json.JSONDecodeError, OSError):
-            _members_cache = {}
+    _members_cache = load_json_dict(_MEMBERS_FILE)
 
 
 def _members_save(force: bool = False) -> None:
@@ -60,8 +68,7 @@ def _members_save(force: bool = False) -> None:
     if not _members_dirty or (not force and now - _members_last_save < _MEMBERS_SAVE_INTERVAL):
         return
     try:
-        _MEMBERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _MEMBERS_FILE.write_text(json.dumps(_members_cache, ensure_ascii=False), encoding="utf-8")
+        save_json_file(_MEMBERS_FILE, _members_cache)
         _members_dirty = False
         _members_last_save = now
     except OSError:
@@ -74,7 +81,7 @@ def _members_record(event) -> None:
     gid = event.group_id or ""
     if not gid:
         return
-    author = ((getattr(event, "raw", None) or {}).get("d") or {}).get("author") or {}
+    author = _event_d(event).get("author") or {}
     uid = event.user_id or ""
     if uid and isinstance(author, dict) and (author.get("username") or author.get("member_role")):
         grp = _members_cache.setdefault(gid, {})
@@ -202,7 +209,7 @@ def _event_get(event, path: str) -> str:
 
 def _channel_role(event) -> str:
     """频道消息身份：d.member.roles 里 4=频道主 2=管理员 5=子频道管理，其余为成员。"""
-    d = (getattr(event, "raw", None) or {}).get("d") or {}
+    d = _event_d(event)
     roles = (d.get("member") or {}).get("roles") or []
     roles = {str(r) for r in roles}
     if "4" in roles:
@@ -263,7 +270,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
 
     async def send_guild_dm(uid, content):
         # 频道私信：先创建私信会话, 再向会话 guild 发消息
-        gid = event.guild_id or str(((getattr(event, "raw", None) or {}).get("d") or {}).get("guild_id", "") or "")
+        gid = event.guild_id or str(_event_d(event).get("guild_id", "") or "")
         ok, data = await event.sender._request(
             "POST", "/users/@me/dms",
             json={"recipient_id": uid, "source_guild_id": gid})
@@ -286,7 +293,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
             return None
         # 平台未开放群成员查询接口，以消息体/本地缓存为主，接口作为尝试项
         if uid == (event.user_id or ""):
-            author = ((getattr(event, "raw", None) or {}).get("d") or {}).get("author") or {}
+            author = _event_d(event).get("author") or {}
             if isinstance(author, dict) and (author.get("username") or author.get("member_role")):
                 out = dict(author)
                 out.setdefault("member_openid", uid)
@@ -390,16 +397,13 @@ def _resolve_local_media(path_str: str):
 
 
 async def _download_bytes(url: str):
-    timeout = aiohttp.ClientTimeout(total=http_timeout())
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url) as resp:
-            return await resp.content.read(20 * 1024 * 1024)
+    return await fetch_bytes("GET", url, max_bytes=20 * 1024 * 1024)
 
 
 async def _send_media(event, kind: str, content: str) -> None:
     reply = {"image": event.reply_image, "video": event.reply_video,
              "voice": event.reply_voice, "file": event.reply_file}[kind]
-    if content.startswith(("http://", "https://")):
+    if is_http_url(content):
         if kind == "file":
             # 框架 reply_file 的 URL 分支存在 kwargs 问题，改为自行下载后以字节发送
             try:
@@ -436,7 +440,7 @@ def _parse_buttons(spec: str, small: bool = False):
                 continue
             text, _, value = item.partition(";")
             text, value = text.strip(), (value or text).strip()
-            if value.startswith(("http://", "https://")):
+            if is_http_url(value):
                 btns.append({"text": text, "link": value})
             elif value.startswith("/"):
                 btns.append({"text": text, "data": value, "type": 2})
@@ -548,8 +552,7 @@ async def ck_dispatch(event, match):
     matched = await engine.handle(ctx)
     if not matched:
         return
-    if ctx.errors:
-        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+    _append_errors(ctx)
     await send_ctx(event, ctx)
     return True
 
@@ -620,8 +623,7 @@ async def ck_interaction(event, match):
     matched = await engine.handle(ctx)
     if not matched:
         return
-    if ctx.errors:
-        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+    _append_errors(ctx)
     await send_ctx(event, ctx)
     return True
 
@@ -664,7 +666,7 @@ async def ck_forum(event, match):
     block_name = next((v for k, v in _FORUM_BLOCKS.items() if et.endswith(k)), "")
     if not block_name or engine.find_block(block_name) is None:
         return
-    d = (getattr(event, "raw", None) or {}).get("d") or {}
+    d = _event_d(event)
     info = d.get("thread_info") or d.get("post_info") or d.get("reply_info") or {}
     ctx = build_ctx(event)
     ctx.message = block_name
@@ -684,8 +686,7 @@ async def ck_forum(event, match):
     matched = await engine.handle(ctx)
     if not matched:
         return
-    if ctx.errors:
-        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+    _append_errors(ctx)
     # 帖子事件没有可回复的消息端点，文本输出改为主动发到当前子频道
     text = "".join(o["content"] for o in ctx.outputs if o["type"] == "text").strip()
     if text and ctx.channel_id:
@@ -717,7 +718,7 @@ async def ck_lifecycle(event, match):
     block_name = _LIFECYCLE_BLOCKS.get(et, "")
     if not block_name or engine.find_block(block_name) is None:
         return
-    d = (getattr(event, "raw", None) or {}).get("d") or {}
+    d = _event_d(event)
     user = d.get("user") or {}
     ctx = build_ctx(event)
     ctx.message = block_name
@@ -734,8 +735,7 @@ async def ck_lifecycle(event, match):
     matched = await engine.handle(ctx)
     if not matched:
         return
-    if ctx.errors:
-        ctx.out_text("\n⚠ " + "\n⚠ ".join(ctx.errors))
+    _append_errors(ctx)
     text = "".join(o["content"] for o in ctx.outputs if o["type"] == "text").strip()
     if text:
         try:
