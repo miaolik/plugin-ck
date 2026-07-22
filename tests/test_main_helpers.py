@@ -181,6 +181,14 @@ def test_parse_buttons_types(main_mod):
     ]
 
 
+def test_parse_buttons_plain_command(main_mod):
+    rows = main_mod._parse_buttons("直接发送;>签到|空值普通;>")
+    assert rows == [
+        [{"text": "直接发送", "data": "签到", "type": 2, "enter": True},
+         {"text": "空值普通", "data": "空值普通", "type": 2, "enter": True}],
+    ]
+
+
 def test_parse_buttons_small(main_mod):
     result = main_mod._parse_buttons("a;b", small=True)
     assert result["font_size"] == "small"

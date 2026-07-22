@@ -438,7 +438,8 @@ async def _send_media(event, kind: str, content: str) -> None:
 def _parse_buttons(spec: str, small: bool = False):
     """±btn=文本;值|文本;值^下一行± → 框架按钮结构。
 
-    值为 URL → 链接按钮；以 / 开头 → 填充输入框(type=2)；其余 → 回调(type=1)。省略值时用文本。
+    值为 URL → 链接按钮；以 / 开头 → 填充输入框(type=2)；以 > 开头 → 普通指令按钮
+    (type=2+enter，点击后以用户身份直接发送该指令)；其余 → 回调(type=1)。省略值时用文本。
     small=True 时返回小字号键盘（font_size=small）。"""
     rows = []
     for row in spec.split("^"):
@@ -453,6 +454,9 @@ def _parse_buttons(spec: str, small: bool = False):
                 btns.append({"text": text, "link": value})
             elif value.startswith("/"):
                 btns.append({"text": text, "data": value, "type": 2})
+            elif value.startswith(">"):
+                data = value[1:].strip() or text
+                btns.append({"text": text, "data": data, "type": 2, "enter": True})
             else:
                 btns.append({"text": text, "data": value, "type": 1})
         if btns:
