@@ -453,13 +453,137 @@ body{margin:0;display:inline-block;background:#fff;font-family:'PingFang SC','Mi
 </style></head><body><div class="card">{{content}}</div></body></html>"""
 
 
-def _get_playwright():
+def _get_module(name: str):
+    """获取框架已启用的可选模块实例（未启用时返回 None）。"""
     from core.bot.manager import _bot_manager_ref
-    mm = getattr(_bot_manager_ref, "module_manager", None) if _bot_manager_ref else None
-    pw = mm.get("playwright") if mm else None
+    if not _bot_manager_ref:
+        return None
+    return _bot_manager_ref.module_manager.get(name)
+
+
+def _get_playwright():
+    pw = _get_module("playwright")
     if pw is None or not pw.is_available():
         raise CKError("渲染引擎不可用：需启用框架的 Playwright 渲染模块")
     return pw
+
+
+def _get_datastore():
+    ds = _get_module("datastore")
+    if ds is None:
+        raise CKError("数据存储引擎未启用：需在框架模块页启用「数据存储引擎」")
+    return ds
+
+
+def _mysql_pool():
+    ds = _get_datastore()
+    if not ds.mysql_available():
+        raise CKError("MySQL 不可用：需在数据存储引擎配置中开启 mysql_enabled 并配置连接")
+    return ds.mysql
+
+
+def _redis_pool():
+    ds = _get_datastore()
+    if not ds.redis_available():
+        raise CKError("Redis 不可用：需在数据存储引擎配置中开启 redis_enabled 并配置连接")
+    return ds.redis
+
+
+async def _mysql_query_action(rest: str) -> str:
+    """$MySQL查 SQL$ → fetch_all，返回 JSON 数组（配合 @%变% [字段] / 循环遍历）。"""
+    sql = rest.strip()
+    if not sql:
+        raise CKError("$MySQL查$ 格式：$MySQL查 SELECT 语句$")
+    rows = await _mysql_pool().fetch_all(sql)
+    return json.dumps(rows or [], ensure_ascii=False, default=str)
+
+
+async def _mysql_exec_action(rest: str) -> str:
+    """$MySQL执行 SQL$ → execute，返回影响行数。"""
+    sql = rest.strip()
+    if not sql:
+        raise CKError("$MySQL执行$ 格式：$MySQL执行 SQL语句$")
+    result = await _mysql_pool().execute(sql)
+    return str(result)
+
+
+async def _redis_get_action(rest: str) -> str:
+    # $Redis读 键 [默认值]$
+    args = rest.split(" ", 1)
+    if not args or not args[0]:
+        raise CKError("$Redis读$ 格式：$Redis读 键 [默认值]$")
+    default = args[1] if len(args) == 2 else ""
+    value = await _redis_pool().get(args[0])
+    return default if value is None else str(value)
+
+
+async def _redis_set_action(rest: str) -> str:
+    # $Redis写 键 [秒=N] 值$（值可含空格）
+    args = rest.split(" ", 1)
+    if len(args) != 2 or not args[0] or not args[1]:
+        raise CKError("$Redis写$ 格式：$Redis写 键 [秒=N] 值$")
+    key, value = args[0], args[1]
+    ex = None
+    head, _, tail = value.partition(" ")
+    if head.startswith("秒=") and head[2:].isdigit() and tail:
+        ex, value = int(head[2:]), tail
+    await _redis_pool().set(key, value, ex=ex)
+    return ""
+
+
+async def _redis_del_action(rest: str) -> str:
+    key = rest.strip()
+    if not key:
+        raise CKError("$Redis删$ 格式：$Redis删 键$")
+    n = await _redis_pool().delete(key)
+    return str(n)
+
+
+async def _redis_incr_action(rest: str) -> str:
+    # $Redis自增 键 [数量]$ → 自增后的值（负数为自减）
+    args = rest.split()
+    if not args or not args[0]:
+        raise CKError("$Redis自增$ 格式：$Redis自增 键 [数量]$")
+    amount = 1
+    if len(args) >= 2:
+        try:
+            amount = int(args[1])
+        except ValueError:
+            raise CKError("$Redis自增$ 数量须为整数")
+    value = await _redis_pool().incr(args[0], amount)
+    return str(value)
+
+
+_HOSTING_TYPES = ("qq", "cos", "bilibili", "chatglm", "ukaka", "xingye", "nature")
+
+
+async def _load_image_arg(image: str) -> bytes:
+    """URL 或本地路径 → 图片字节。"""
+    if is_http_url(image):
+        return await _download_bytes(image)
+    data, _ = _resolve_local_media(image)
+    if data is None:
+        raise CKError(f"本地图片不存在: {image}")
+    return data
+
+
+def _module_status_json() -> str:
+    """$模块状态$ → 各可选模块启用/可用情况 JSON。"""
+    pw = _get_module("playwright")
+    ds = _get_module("datastore")
+    hosting = _get_module("image_hosting")
+    onebot = _get_module("onebot_adapter")
+    status = {
+        "playwright": bool(pw is not None and pw.is_available()),
+        "datastore": {
+            "启用": ds is not None,
+            "mysql": bool(ds is not None and ds.mysql_available()),
+            "redis": bool(ds is not None and ds.redis_available()),
+        },
+        "image_hosting": hosting.status() if hosting is not None else {"启用": False},
+        "onebot_adapter": onebot is not None,
+    }
+    return json.dumps(status, ensure_ascii=False)
 
 
 def _save_render(data: bytes) -> str:
@@ -557,7 +681,63 @@ def _media_actions(sender) -> dict:
             return f"![img #{size[0]}px #{size[1]}px]({link})"
         return f"![img]({link})"
 
-    return {"渲染": render, "画图": draw, "图床": image_bed, "MD图床": md_image_bed}
+    async def upload_hosting(rest):
+        # $上传图床 [类型] 图片URL或本地路径$，类型默认 qq
+        hosting = _get_module("image_hosting")
+        if hosting is None:
+            raise CKError("图床服务未启用：需在框架模块页启用「图床服务」")
+        args = rest.split()
+        if not args:
+            raise CKError("$上传图床$ 格式：$上传图床 [类型] 图片URL或本地路径$，类型："
+                          + "/".join(_HOSTING_TYPES))
+        kind = "qq"
+        if args[0].lower() in _HOSTING_TYPES:
+            kind = args.pop(0).lower()
+        if not args:
+            raise CKError("$上传图床$ 缺少图片URL或本地路径")
+        data = await _load_image_arg(args[0])
+        if kind == "qq":
+            result = await hosting.upload_qq(data, token_manager=sender._token_mgr)
+        elif kind == "cos":
+            result = await hosting.upload_cos_url(data, "ck.png")
+        elif kind == "bilibili":
+            result = await hosting.upload_bilibili(data)
+        elif kind == "chatglm":
+            result = await hosting.upload_chatglm(data)
+        elif kind == "ukaka":
+            result = await hosting.upload_ukaka(data)
+        elif kind == "xingye":
+            result = await hosting.upload_xingye(data)
+        else:
+            result = await hosting.upload_nature(data)
+        if isinstance(result, tuple):
+            raise CKError(f"$上传图床$ {kind} 上传失败: {result[1]}")
+        if not result:
+            raise CKError(f"$上传图床$ {kind} 上传失败")
+        return str(result)
+
+    async def hosting_status(rest):
+        hosting = _get_module("image_hosting")
+        if hosting is None:
+            raise CKError("图床服务未启用：需在框架模块页启用「图床服务」")
+        return json.dumps(hosting.status(), ensure_ascii=False)
+
+    async def module_status(rest):
+        return _module_status_json()
+
+    async def mysql_query(rest):
+        return await _mysql_query_action(rest)
+
+    async def mysql_exec(rest):
+        return await _mysql_exec_action(rest)
+
+    return {
+        "渲染": render, "画图": draw, "图床": image_bed, "MD图床": md_image_bed,
+        "上传图床": upload_hosting, "图床状态": hosting_status, "模块状态": module_status,
+        "MySQL查": mysql_query, "MySQL执行": mysql_exec,
+        "Redis读": _redis_get_action, "Redis写": _redis_set_action,
+        "Redis删": _redis_del_action, "Redis自增": _redis_incr_action,
+    }
 
 
 def _parse_buttons(spec: str, small: bool = False):
