@@ -317,6 +317,33 @@ async def test_call_func_delete_and_keys(tmp_path, monkeypatch):
     assert await eng._call_func("读 f.txt a def", ctx, 0) == "def"
 
 
+def test_md_combined_formats_single_message():
+    """±md± 块内标题/多图/代码框/表格/引用合并成一个文本片段（一条 MD 消息），按钮独立挂载。"""
+    eng = make_engine(
+        "测试MD\n"
+        "±md±# 标题\\n\n"
+        "$MD图片 https://i.example.com/a.png 120 80$\\n\n"
+        "$MD图片 https://i.example.com/b.png 200 100$\\n\n"
+        '$MD代码 语言=python print("hi")$\\n\n'
+        "$MD表格 @ 名次|昵称@1|甲$\\n\n"
+        "> 引用 **加粗**\n"
+        "±btn=按钮;>测试MD±"
+    )
+    text, ctx = run(eng, "测试MD")
+    assert ctx.md_mode is True
+    texts = [o for o in ctx.outputs if o["type"] == "text"]
+    assert len(texts) == 1
+    assert text == (
+        "# 标题\n"
+        "![img #120px #80px](https://i.example.com/a.png)\n"
+        "![img #200px #100px](https://i.example.com/b.png)\n"
+        '```python\nprint("hi")\n```\n'
+        "|名次|昵称|\n|---|---|\n|1|甲|\n"
+        "> 引用 **加粗**"
+    )
+    assert [o["type"] for o in ctx.outputs] == ["text", "buttons"]
+
+
 async def test_call_func_recall_requires_support():
     with pytest.raises(CKError):
         await call("撤回")

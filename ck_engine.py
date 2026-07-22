@@ -1186,8 +1186,8 @@ class CKEngine:
             # $MD图片 URL [宽 高]$ → Markdown 图片语法，可在一条 ±md± 消息里放多张；
             # 不填宽高时自动下载图片读取尺寸
             args = rest.split()
-            if not args or not args[0]:
-                raise CKError("$MD图片$ 格式：$MD图片 URL [宽 高]$")
+            if not args or not is_http_url(args[0]):
+                raise CKError("$MD图片$ 格式：$MD图片 URL [宽 高]$（URL 须为 http/https 链接）")
             url = args[0]
             if len(args) >= 3 and args[1].isdigit() and args[2].isdigit():
                 return f"![img #{args[1]}px #{args[2]}px]({url})"
