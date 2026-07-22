@@ -8,6 +8,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from core.base.logger import PLUGIN, get_logger
 from core.plugin.decorators import on_load, on_unload
 from core.plugin.web_pages import register_page, register_route, unregister_page
 
@@ -18,6 +19,8 @@ from .ck_engine import (
 )
 
 PAGE_KEY = "ck-editor"
+
+logger = get_logger(PLUGIN, "词库")
 
 _NAME_RE = re.compile(r"^[\w\u4e00-\u9fff\-]{1,64}$")
 
@@ -30,6 +33,17 @@ def _dict_path(name: str) -> Path:
 
 def _err(message: str, status: int = 400) -> web.Response:
     return web.json_response({"success": False, "message": message}, status=status)
+
+
+async def _json_body(request):
+    """解析请求体 JSON，返回 (data, error_response)；失败时 data 为 None。"""
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return None, _err("请求体不是合法的 JSON")
+    if not isinstance(body, dict):
+        return None, _err("请求体必须是 JSON 对象")
+    return body, None
 
 
 @register_route("GET", "/api/ext/ck/dicts")
@@ -69,7 +83,9 @@ async def api_dict_get(request):
 
 @register_route("POST", "/api/ext/ck/dict/save")
 async def api_dict_save(request):
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     name = str(body.get("name", "")).strip()
     content = str(body.get("content", ""))
     try:
@@ -86,7 +102,9 @@ async def api_dict_save(request):
 
 @register_route("POST", "/api/ext/ck/dict/rename")
 async def api_dict_rename(request):
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     try:
         old = _dict_path(str(body.get("name", "")).strip())
         new = _dict_path(str(body.get("new_name", "")).strip())
@@ -104,7 +122,9 @@ async def api_dict_rename(request):
 
 @register_route("POST", "/api/ext/ck/dict/delete")
 async def api_dict_delete(request):
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     try:
         path = _dict_path(str(body.get("name", "")).strip())
     except ValueError as exc:
@@ -119,7 +139,9 @@ async def api_dict_delete(request):
 
 @register_route("POST", "/api/ext/ck/dict/toggle")
 async def api_dict_toggle(request):
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     name = str(body.get("name", ""))
     try:
         path = _dict_path(name)
@@ -145,7 +167,9 @@ async def api_reload(request):
 @register_route("POST", "/api/ext/ck/test")
 async def api_test(request):
     """沙盒测试：模拟一条消息触发词库，返回输出片段（不真正发送）。"""
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     message = str(body.get("message", "")).strip()
     if not message:
         return _err("请输入测试消息")
@@ -173,7 +197,9 @@ async def api_test(request):
 @register_route("POST", "/api/ext/ck/censor_test")
 async def api_censor_test(request):
     """内容审核测试连通：可先保存百度密钥（留空则用内置接口），再实际调用一次审核。"""
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     key = str(body.get("baidu_key", "") or "").strip()
     secret = str(body.get("baidu_secret", "") or "").strip()
     data = globals_load()
@@ -193,6 +219,7 @@ async def api_censor_test(request):
     try:
         result = json.loads(await engine.censor_text(text))
     except Exception as exc:
+        logger.warning("内容审核测试调用失败", exc_info=True)
         return web.json_response({"success": False, "message": f"审核调用失败: {exc}"})
     return web.json_response({"success": True, "provider": result.get("provider", ""),
                               "conclusion": result.get("conclusion", ""), "result": result})
@@ -206,7 +233,9 @@ async def api_settings_get(request):
 
 @register_route("POST", "/api/ext/ck/settings")
 async def api_settings_save(request):
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     try:
         value = int(body.get("http_timeout", DEFAULT_HTTP_TIMEOUT))
     except (TypeError, ValueError):
@@ -227,7 +256,9 @@ async def api_globals_get(request):
 
 @register_route("POST", "/api/ext/ck/globals")
 async def api_globals_save(request):
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     data = body.get("globals")
     if not isinstance(data, dict):
         return _err("globals 必须是对象")
@@ -264,7 +295,9 @@ async def api_data_content(request):
 
 @register_route("POST", "/api/ext/ck/data/delete")
 async def api_data_delete(request):
-    body = await request.json()
+    body, err = await _json_body(request)
+    if err:
+        return err
     rel = str(body.get("path", ""))
     target = (DATA_DIR / rel).resolve()
     if DATA_DIR.resolve() not in target.parents:

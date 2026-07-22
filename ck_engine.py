@@ -24,6 +24,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import aiohttp
 
+from core.base.logger import PLUGIN, get_logger, report_error
+
+logger = get_logger(PLUGIN, "词库")
+
 BASE_DIR = Path(__file__).resolve().parent
 DICT_DIR = BASE_DIR / "dicts"
 DATA_DIR = BASE_DIR / "data"
@@ -233,8 +237,9 @@ def settings_load() -> Dict[str, object]:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
-        except (json.JSONDecodeError, OSError):
-            pass
+            logger.warning("设置文件内容非对象，已忽略: %s", SETTINGS_FILE)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("读取设置文件失败，改用默认设置: %s (%s)", SETTINGS_FILE, exc)
     return {}
 
 
@@ -278,8 +283,10 @@ def globals_load() -> Dict[str, str]:
             data = json.loads(GLOBAL_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return {str(k): str(v) for k, v in data.items()}
-        except (json.JSONDecodeError, OSError):
-            pass
+            logger.warning("全局变量文件内容非对象，已忽略: %s", GLOBAL_FILE)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("读取全局变量文件失败，改用空表（保存将覆盖旧内容）: %s (%s)",
+                           GLOBAL_FILE, exc)
     return {}
 
 
@@ -301,7 +308,10 @@ def rank_write(path: str, key: str, member: str, value: str) -> None:
             loaded = json.loads(f.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 data = loaded
-        except (json.JSONDecodeError, OSError):
+            else:
+                logger.warning("排行榜文件内容非对象，将被覆盖: %s", f)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("读取排行榜文件失败，将被覆盖: %s (%s)", f, exc)
             data = {}
     items = data.setdefault(key, [])
     value = _eval_arith_brackets(value).strip()
@@ -321,7 +331,8 @@ def rank_read(path: str, key: str, mode: str, index: str) -> str:
         return ""
     try:
         data = json.loads(f.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("读取排行榜文件失败: %s (%s)", f, exc)
         return ""
     items = data.get(key) if isinstance(data, dict) else None
     if not isinstance(items, list):
@@ -620,6 +631,9 @@ class CKEngine:
             pass
         except CKError as exc:
             self.parse_errors.append(f"初始化失败: {exc}")
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={"phase": "#INITROBOT#"})
+            self.parse_errors.append(f"初始化异常: {exc}")
 
     # ---- 触发 ----
 
@@ -644,6 +658,11 @@ class CKEngine:
             pass
         except CKError as exc:
             ctx.errors.append(str(exc))
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={
+                "trigger": blk.trigger, "source": f"{blk.source}:{blk.lineno}",
+                "message": ctx.message, "user_id": ctx.user_id})
+            ctx.errors.append(f"内部错误: {exc}")
         return True
 
     async def run_command(self, command: str, ctx: Ctx, depth: int, *, internal_only: bool = False) -> None:
@@ -1537,10 +1556,18 @@ class CKEngine:
                   recall=ctx.recall, actions=ctx.actions)
         try:
             await self.run_command(command, sub, depth)
-        except CKError:
+        except CKError as exc:
+            logger.warning("$调用$ 延迟指令执行失败 (command=%s): %s", command, exc)
+            return
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={"phase": "$调用$", "command": command})
             return
         if sub.send:
-            await sub.send(sub)
+            try:
+                await sub.send(sub)
+            except Exception as exc:
+                report_error(PLUGIN, "词库", exc,
+                             context={"phase": "$调用$ 发送", "command": command})
 
     # ---- 数组取值与发送语句 ----
 

@@ -10,9 +10,12 @@ from pathlib import Path
 import aiohttp
 
 from core.plugin.decorators import handler, on_load
+from core.base.logger import PLUGIN, get_logger, report_error
 
 from .ck_engine import BASE_DIR, DATA_DIR, Ctx, _assert_public_url, engine, http_timeout
 from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
+
+logger = get_logger(PLUGIN, "词库")
 
 __plugin_meta__ = {
     "name": "词库",
@@ -29,6 +32,7 @@ def _get_bot(appid):
     try:
         return _bot_manager_ref.get_bot(appid)
     except Exception:
+        logger.debug("获取 bot 实例失败 (appid=%s)", appid, exc_info=True)
         return None
 
 
@@ -50,7 +54,10 @@ def _members_load() -> None:
             data = json.loads(_MEMBERS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 _members_cache = data
-        except (json.JSONDecodeError, OSError):
+            else:
+                logger.warning("成员缓存文件内容非对象，已忽略: %s", _MEMBERS_FILE)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("读取成员缓存文件失败，改用空缓存: %s (%s)", _MEMBERS_FILE, exc)
             _members_cache = {}
 
 
@@ -64,8 +71,8 @@ def _members_save(force: bool = False) -> None:
         _MEMBERS_FILE.write_text(json.dumps(_members_cache, ensure_ascii=False), encoding="utf-8")
         _members_dirty = False
         _members_last_save = now
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("写入成员缓存文件失败，成员信息未持久化: %s (%s)", _MEMBERS_FILE, exc)
 
 
 def _members_record(event) -> None:
@@ -131,6 +138,7 @@ async def _bot_role(event, cache_only: bool = False) -> str:
             if isinstance(member, dict):
                 role = member.get("member_role", "") or ""
         except Exception:
+            logger.debug("查询机器人群身份失败 (group_id=%s)", event.group_id, exc_info=True)
             role = ""
     _BOT_ROLE_CACHE[key] = (role, now + _BOT_ROLE_TTL)
     return role
@@ -297,6 +305,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         try:
             member = await event.sender.get_group_member(event.group_id, uid)
         except Exception:
+            logger.debug("查询群成员失败 (group_id=%s, uid=%s)", event.group_id, uid, exc_info=True)
             member = None
         if member:
             return member
@@ -318,6 +327,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         try:
             member = await event.sender.get_bot_member(event.group_id)
         except Exception:
+            logger.debug("查询机器人成员失败 (group_id=%s)", event.group_id, exc_info=True)
             member = None
         return member or None
 
@@ -384,7 +394,8 @@ def _resolve_local_media(path_str: str):
             c = c.resolve()
             if c.exists() and c.is_file():
                 return c.read_bytes(), c.name
-        except OSError:
+        except OSError as exc:
+            logger.debug("读取本地媒体候选失败: %s (%s)", c, exc)
             continue
     return None, None
 
@@ -586,7 +597,8 @@ async def _ack_interaction(event) -> bool:
             return True
         return False
     except Exception:
-        # ack 失败不应阻塞主逻辑，静默处理
+        # ack 失败不应阻塞主逻辑，记录后继续
+        logger.warning("interaction ack 失败", exc_info=True)
         return False
 
 
@@ -692,8 +704,9 @@ async def ck_forum(event, match):
     if text and ctx.channel_id:
         try:
             await event.sender.send_to_channel(ctx.channel_id, text)
-        except Exception:
-            pass
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={
+                "phase": "帖子事件输出", "block": block_name, "channel_id": ctx.channel_id})
     return True
 
 
@@ -746,8 +759,9 @@ async def ck_lifecycle(event, match):
                 await event.send_to_group(event.group_id, text)
             elif ctx.user_id and et in ("FRIEND_ADD", "FRIEND_DEL", "GROUP_DEL_ROBOT"):
                 await event.send_to_user(ctx.user_id, text)
-        except Exception:
-            pass
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={
+                "phase": "进退事件输出", "block": block_name, "event_type": et})
     return True
 
 
