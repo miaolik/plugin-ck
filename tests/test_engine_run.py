@@ -126,6 +126,44 @@ def test_callback_merges_output():
     assert out == "子结果前  后"
 
 
+def test_callback_vars_flow_both_ways():
+    # 子块可读调用方变量，子块内赋值也回传给调用方（变量延续）
+    eng = make_engine("[内部]sub\ny:[%x%+1]\n\n主\nx:5\n$回调 sub$%y%")
+    out, _ = run(eng, "主")
+    assert out == "6"
+
+
+def test_callback_break_exits_caller_loop():
+    # 回调内 如果 判断不通过时 跳出，应结束调用方所在循环
+    eng = make_engine(
+        "[内部]检查\n如果:%i%==3\n跳出\n如果尾\n\n"
+        "主\ni:1\n循环:i<=10\n$回调 检查$%i%\ni:[%i%+1]\n结束\nend")
+    out, _ = run(eng, "主")
+    assert out == "12end"
+
+
+def test_callback_continue_skips_caller_iteration():
+    eng = make_engine(
+        "[内部]检查\n如果:%i%==2\n继续\n如果尾\n\n"
+        "主\ni:0\n循环:i<=3\ni:[%i%+1]\n$回调 检查$%i%\n结束")
+    out, _ = run(eng, "主")
+    assert out == "134"
+
+
+def test_loop_nested_in_foreach():
+    # 循环遍历 内嵌 循环:，外层 结束 不应被内层 结束 提前截断
+    eng = make_engine("遍历\n循环遍历:a,b x\nj:1\n循环:j<=2\n%x%%j%\nj:[%j%+1]\n结束\n结束\nend")
+    out, _ = run(eng, "遍历")
+    assert out == "a1a2b1b2end"
+
+
+def test_switch_nested_in_switch():
+    eng = make_engine(
+        "测\n分支:a\n情况:a\n外A\n分支:b\n情况:a\n内A\n情况:b\n内B\n分支尾\n情况:b\n外B\n分支尾")
+    out, _ = run(eng, "测")
+    assert out == "外A内B"
+
+
 # ---- _call_func 纯函数 ----
 
 async def call(func_str, **kw):

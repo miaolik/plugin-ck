@@ -696,10 +696,13 @@ class CKEngine:
         sub = ctx.child(command)
         sub.vars.update(ctx.vars)  # 子块可读调用方局部变量
         sub.match = m
+        signal: Optional[Exception] = None
         try:
             await self._run_lines(blk.lines, sub, depth + 1)
-        except (ReturnSignal, BreakSignal, ContinueSignal):
+        except ReturnSignal:
             pass
+        except (BreakSignal, ContinueSignal) as exc:
+            signal = exc  # 跳出/继续 穿透回调，作用于调用方所在循环
         ctx.vars.update(sub.vars)  # 子块赋值回传, [内部]块可当查表/子程序用
         ctx.errors.extend(sub.errors)
         # 合并输出（回调语义）
@@ -712,6 +715,8 @@ class CKEngine:
         ctx.text_mode = ctx.text_mode or sub.text_mode
         ctx.skip_suffix = ctx.skip_suffix or sub.skip_suffix
         ctx.auto_delete = ctx.auto_delete or sub.auto_delete
+        if signal is not None:
+            raise signal
 
     # ---- 执行 ----
 
@@ -794,8 +799,20 @@ class CKEngine:
         matched_any = False
         default_body: List[str] = []
         in_default = False
+        nest = 0
         while j < end:
             line = lines[j]
+            if line.startswith("分支:") or line.startswith("分支："):
+                nest += 1
+            elif line == "分支尾" and nest > 0:
+                nest -= 1
+            if nest > 0:
+                if current_match:
+                    chosen.append(line)
+                elif in_default:
+                    default_body.append(line)
+                j += 1
+                continue
             if line.startswith("情况:") or line.startswith("情况："):
                 case_val = (await self._expand(line[3:], ctx, depth)).strip()
                 current_match = (case_val == value) and not matched_any
@@ -836,7 +853,7 @@ class CKEngine:
 
     async def _run_foreach(self, lines: List[str], start: int, ctx: Ctx, depth: int) -> int:
         """循环遍历:数据 项变量 [序变量] —— 遍历 JSON 数组/对象或逗号分隔文本。"""
-        end = self._skip_to(lines, start, "循环遍历", "结束")
+        end = self._skip_to(lines, start, "循环", "结束")
         head = lines[start][5:]
         body = lines[start + 1:end]
         parts = head.rsplit(" ", 2)
@@ -1551,6 +1568,8 @@ class CKEngine:
         sub = ctx.child(command)
         try:
             await self.run_command(command, sub, depth)
+        except (ReturnSignal, BreakSignal, ContinueSignal):
+            pass
         except CKError as exc:
             logger.warning("$调用$ 延迟指令执行失败 (command=%s): %s", command, exc)
             return
