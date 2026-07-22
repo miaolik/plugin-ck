@@ -181,6 +181,13 @@ def test_parse_buttons_types(main_mod):
     ]
 
 
+def test_split_viewport(main_mod):
+    assert main_mod._split_viewport("800x600 https://x") == ((800, 600), "https://x")
+    assert main_mod._split_viewport("1280*720 html <h1>hi</h1>") == ((1280, 720), "html <h1>hi</h1>")
+    assert main_mod._split_viewport("https://x") == (None, "https://x")
+    assert main_mod._split_viewport("你好 世界") == (None, "你好 世界")
+
+
 def test_parse_buttons_plain_command(main_mod):
     rows = main_mod._parse_buttons("直接发送;>签到|空值普通;>")
     assert rows == [

@@ -203,6 +203,61 @@ async def test_call_func_md_code():
     assert await call("MD代码 语言=python a\\nb") == "```python\na\nb\n```"
 
 
+async def test_call_func_md_table():
+    out = await call("MD表格 @ 名次|昵称@1|甲@2|乙")
+    assert out == "|名次|昵称|\n|---|---|\n|1|甲|\n|2|乙|"
+    with pytest.raises(CKError):
+        await call("MD表格 ")
+
+
+def test_image_size_from_bytes():
+    from ck_engine import image_size_from_bytes
+    png = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
+           + (300).to_bytes(4, "big") + (200).to_bytes(4, "big") + b"\x00" * 10)
+    assert image_size_from_bytes(png) == (300, 200)
+    gif = b"GIF89a" + (64).to_bytes(2, "little") + (32).to_bytes(2, "little") + b"\x00" * 20
+    assert image_size_from_bytes(gif) == (64, 32)
+    jpg = (b"\xff\xd8\xff\xc0" + (17).to_bytes(2, "big") + b"\x08"
+           + (240).to_bytes(2, "big") + (320).to_bytes(2, "big") + b"\x00" * 20)
+    assert image_size_from_bytes(jpg) == (320, 240)
+    assert image_size_from_bytes(b"not an image at all, definitely") is None
+
+
+async def test_call_func_cron_dispatch():
+    class FakeMgr:
+        def __init__(self):
+            self.calls = []
+
+        def add(self, name, cron, command, ctx):
+            self.calls.append(("add", name, cron, command))
+
+        def remove(self, name):
+            self.calls.append(("remove", name))
+
+        def toggle(self, name, enabled):
+            self.calls.append(("toggle", name, enabled))
+
+        def list_json(self):
+            return "[]"
+
+    eng = CKEngine()
+    eng.cron_manager = FakeMgr()
+    ctx = Ctx(message="x", appid="APP", group_id="G")
+
+    assert await eng._call_func("定时列表", ctx, 0) == "[]"
+    await eng._call_func("定时添加 早报 0 8 * * * 早报推送", ctx, 0)
+    assert eng.cron_manager.calls[-1] == ("add", "早报", "0 8 * * *", "早报推送")
+    await eng._call_func("定时开关 早报 0", ctx, 0)
+    assert eng.cron_manager.calls[-1] == ("toggle", "早报", False)
+    await eng._call_func("定时删除 早报", ctx, 0)
+    assert eng.cron_manager.calls[-1] == ("remove", "早报")
+    with pytest.raises(CKError):
+        await eng._call_func("定时添加 名字 0 8 * * *", ctx, 0)  # 缺指令
+    eng.cron_manager = None
+    with pytest.raises(CKError):
+        await eng._call_func("定时列表", ctx, 0)
+
+
 async def test_call_func_url_encode_decode():
     assert await call("URLEncoder a b") == "a%20b"
     assert await call("URLDecoder a%20b") == "a b"

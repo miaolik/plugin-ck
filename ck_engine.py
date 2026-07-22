@@ -153,6 +153,45 @@ async def fetch_bytes(method: str, url: str, *, max_bytes: int,
             return await resp.content.read(max_bytes)
 
 
+def image_size_from_bytes(data: bytes) -> Optional[Tuple[int, int]]:
+    """从图片字节解析尺寸 (宽, 高)，支持 PNG/JPEG/GIF/WEBP，失败返回 None。"""
+    if len(data) < 30:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        chunk = data[12:16]
+        if chunk == b"VP8 ":
+            return (int.from_bytes(data[26:28], "little") & 0x3FFF,
+                    int.from_bytes(data[28:30], "little") & 0x3FFF)
+        if chunk == b"VP8L":
+            b = data[21:25]
+            w = 1 + (((b[1] & 0x3F) << 8) | b[0])
+            h = 1 + (((b[3] & 0x0F) << 10) | (b[2] << 2) | ((b[1] & 0xC0) >> 6))
+            return w, h
+        if chunk == b"VP8X":
+            return (1 + int.from_bytes(data[24:27], "little"),
+                    1 + int.from_bytes(data[27:30], "little"))
+        return None
+    if data[:2] == b"\xff\xd8":  # JPEG：扫描 SOF 段
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                return None
+            marker = data[i + 1]
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            seg_len = int.from_bytes(data[i + 2:i + 4], "big")
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                return (int.from_bytes(data[i + 7:i + 9], "big"),
+                        int.from_bytes(data[i + 5:i + 7], "big"))
+            i += 2 + seg_len
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 解析
 # ---------------------------------------------------------------------------
@@ -613,6 +652,7 @@ class CKEngine:
         self.parse_errors: List[str] = []
         self.databases: Dict[str, Path] = {}
         self.loaded_at = 0.0
+        self.cron_manager = None  # 由 main 注入（ck_cron.CronManager）
 
     # ---- 加载 ----
 
@@ -1143,14 +1183,46 @@ class CKEngine:
             return urllib.parse.unquote(rest)
 
         if name == "MD图片":
-            # $MD图片 URL [宽 高]$ → Markdown 图片语法，可在一条 ±md± 消息里放多张
+            # $MD图片 URL [宽 高]$ → Markdown 图片语法，可在一条 ±md± 消息里放多张；
+            # 不填宽高时自动下载图片读取尺寸
             args = rest.split()
             if not args or not args[0]:
                 raise CKError("$MD图片$ 格式：$MD图片 URL [宽 高]$")
             url = args[0]
             if len(args) >= 3 and args[1].isdigit() and args[2].isdigit():
                 return f"![img #{args[1]}px #{args[2]}px]({url})"
+            size = await self._probe_image_size(url)
+            if size:
+                return f"![img #{size[0]}px #{size[1]}px]({url})"
             return f"![img]({url})"
+
+        if name in ("渲染", "画图", "图床", "MD图床"):
+            action = ctx.actions.get(name)
+            if not action:
+                raise CKError(f"${name}$ 当前环境不支持")
+            return await action(rest)
+
+        if name == "图床频道":
+            cid = rest.strip()
+            if not cid:
+                raise CKError("$图床频道$ 格式：$图床频道 子频道ID$")
+            data = settings_load()
+            data["image_bed_channel"] = cid
+            settings_save(data)
+            return ""
+        if name == "MD表格":
+            # $MD表格 @ 表头1|表头2@a|b@c|d$ → Markdown 表格（首参为行分隔符，列用 | 分隔）
+            sep, _, body = rest.partition(" ")
+            if not sep or not body:
+                raise CKError("$MD表格$ 格式：$MD表格 @ 表头1|表头2@a|b@c|d$")
+            rows = [r for r in body.split(sep) if r.strip()]
+            if not rows:
+                raise CKError("$MD表格$ 至少需要表头行")
+            cols = len(rows[0].split("|"))
+            lines = ["|" + rows[0] + "|", "|" + "|".join(["---"] * cols) + "|"]
+            lines += ["|" + r + "|" for r in rows[1:]]
+            return "\n".join(lines)
+
         if name == "MD代码":
             # $MD代码 内容$ / $MD代码 语言=python 内容$ → Markdown 代码框
             lang = ""
@@ -1204,6 +1276,28 @@ class CKEngine:
             return ""
         if name == "回调":
             await self.run_command(rest.strip(), ctx, depth, internal_only=True)
+            return ""
+
+        if name in ("定时添加", "定时删除", "定时列表", "定时开关"):
+            mgr = self.cron_manager
+            if mgr is None:
+                raise CKError(f"${name}$ 当前环境不支持")
+            if name == "定时列表":
+                return mgr.list_json()
+            if name == "定时删除":
+                mgr.remove(rest.strip())
+                return ""
+            if name == "定时开关":
+                args = rest.split()
+                if len(args) != 2 or args[1] not in ("0", "1"):
+                    raise CKError("$定时开关$ 格式：$定时开关 名字 1/0$")
+                mgr.toggle(args[0], args[1] == "1")
+                return ""
+            # 定时添加 名字 分 时 日 月 周 指令
+            parts = rest.split(" ", 6)
+            if len(parts) != 7:
+                raise CKError("$定时添加$ 格式：$定时添加 名字 分 时 日 月 周 指令$")
+            mgr.add(parts[0], " ".join(parts[1:6]), parts[6].strip(), ctx)
             return ""
 
         if name in ("主动私聊", "主动群发", "主动频道", "频道私聊", "召回", "强制召回"):
@@ -1263,6 +1357,17 @@ class CKEngine:
             return api_result(ok, result)
 
         raise CKError(f"未知函数: ${name}$")
+
+    async def _probe_image_size(self, url: str) -> Optional[Tuple[int, int]]:
+        """下载图片头部字节并解析尺寸，失败返回 None（不报错）。"""
+        if not is_http_url(url):
+            return None
+        try:
+            await _assert_public_url(url)
+            data = await fetch_bytes("GET", url, max_bytes=256 * 1024)
+        except (CKError, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            return None
+        return image_size_from_bytes(data)
 
     # 频道管理函数：基于 QQ 频道 v1 接口，仅频道场景可用，机器人需相应权限
     _GUILD_FUNC_NAMES = ("频道撤回", "频道禁言", "频道全员禁言", "频道踢人", "频道拉黑",

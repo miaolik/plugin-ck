@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """词库插件入口：GQ 风格词库引擎 + Web 词库编辑器。"""
 
+import hashlib
 import time
 import json
 import re
@@ -9,21 +10,23 @@ from pathlib import Path
 
 import aiohttp
 
-from core.plugin.decorators import handler, on_load
+from core.plugin.decorators import handler, on_load, on_unload
 from core.base.logger import PLUGIN, get_logger, report_error
 
 from .ck_engine import (
-    BASE_DIR, DATA_DIR, Ctx, _assert_public_url, engine, fetch_bytes,
-    is_http_url, load_json_dict, save_json_file,
+    BASE_DIR, DATA_DIR, CKError, Ctx, _assert_public_url, engine, fetch_bytes,
+    image_size_from_bytes, is_http_url, load_json_dict, save_json_file,
+    settings_load,
 )
 from . import ck_web  # noqa: F401  (注册 Web 页面与路由)
+from .ck_cron import CronManager
 
 logger = get_logger(PLUGIN, "词库")
 
 __plugin_meta__ = {
     "name": "词库",
     "description": "GQ 风格词库引擎：变量/正则/如果判断/循环遍历/读写数据/排行榜/数据库/访问URL/按钮/引用/撤回/主动消息/多消息类型，含 Web 词库编辑器",
-    "version": "1.2.1",
+    "version": "1.3.0",
     "author": "miaolik",
 }
 
@@ -353,6 +356,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         "机器人成员": bot_member,
         "官方API": open_api,
     }
+    actions.update(_media_actions(event.sender))
 
     bot = _get_bot(event.appid)
     return Ctx(
@@ -433,6 +437,127 @@ async def _send_media(event, kind: str, content: str) -> None:
         await reply(data, file_name=name)
     else:
         await reply(data)
+
+
+# ---------------------------------------------------------------------------
+# 渲染 / 画图 / 图床（基于框架 Playwright 渲染模块与频道图床）
+# ---------------------------------------------------------------------------
+
+RENDER_DIR = DATA_DIR / "渲染"
+_RENDER_KEEP_SECONDS = 3600
+_SIZE_RE = re.compile(r"^(\d{2,4})[xX\*](\d{2,4})$")
+
+_DRAW_TEMPLATE = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{margin:0;display:inline-block;background:#fff;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
+.card{padding:24px 28px;font-size:20px;line-height:1.7;color:#2f3542;white-space:pre-wrap;word-break:break-all}
+</style></head><body><div class="card">{{content}}</div></body></html>"""
+
+
+def _get_playwright():
+    from core.bot.manager import _bot_manager_ref
+    mm = getattr(_bot_manager_ref, "module_manager", None) if _bot_manager_ref else None
+    pw = mm.get("playwright") if mm else None
+    if pw is None or not pw.is_available():
+        raise CKError("渲染引擎不可用：需启用框架的 Playwright 渲染模块")
+    return pw
+
+
+def _save_render(data: bytes) -> str:
+    """保存渲染结果到 data/渲染/，返回相对 data/ 的路径（可直接用于 ±img=±）。"""
+    RENDER_DIR.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    for f in RENDER_DIR.glob("*.png"):
+        try:
+            if now - f.stat().st_mtime > _RENDER_KEEP_SECONDS:
+                f.unlink()
+        except OSError:
+            continue
+    name = f"{int(now * 1000)}_{len(data) & 0xFFFF}.png"
+    (RENDER_DIR / name).write_bytes(data)
+    return f"渲染/{name}"
+
+
+def _split_viewport(rest: str):
+    """可选首参 宽x高 → ((宽,高), 剩余内容)，未指定时为 (None, 原内容)。"""
+    parts = rest.split(" ", 1)
+    if len(parts) == 2:
+        m = _SIZE_RE.match(parts[0])
+        if m:
+            return (int(m.group(1)), int(m.group(2))), parts[1].strip()
+    return None, rest
+
+
+async def _render_action(rest: str) -> str:
+    """$渲染 [宽x高] URL$ / $渲染 [宽x高] html HTML内容$ → 截图保存，返回本地路径。"""
+    rest = rest.strip()
+    viewport, rest = _split_viewport(rest)
+    pw = _get_playwright()
+    if rest.startswith("html "):
+        img = await pw.screenshot_html(rest[5:], viewport=viewport, image_format="png")
+    elif is_http_url(rest):
+        await _assert_public_url(rest)
+        img = await pw.screenshot_url(rest, viewport=viewport, image_format="png")
+    else:
+        raise CKError("$渲染$ 格式：$渲染 [宽x高] URL$ 或 $渲染 [宽x高] html HTML内容$")
+    return _save_render(img)
+
+
+async def _draw_action(rest: str) -> str:
+    """$画图 [宽x高] 文字或HTML片段$ → 文字卡片图，返回本地路径。"""
+    rest = rest.strip()
+    viewport, content = _split_viewport(rest)
+    if not content:
+        raise CKError("$画图$ 格式：$画图 [宽x高] 文字或HTML片段$")
+    content = content.replace("\\n", "<br>").replace("\\r", "<br>")
+    html = _DRAW_TEMPLATE.replace("{{content}}", content)
+    pw = _get_playwright()
+    img = await pw.screenshot_html(html, viewport=viewport, full_page=True,
+                                   image_format="png", selector=".card")
+    return _save_render(img)
+
+
+async def _image_bed_core(url: str, sender):
+    """把图片备份到图床子频道，返回 (永久链接, 图片字节)。"""
+    if not is_http_url(url):
+        raise CKError("$图床$ 格式：$图床 图片URL$")
+    bed = str(settings_load().get("image_bed_channel") or "")
+    if not bed:
+        raise CKError("未配置图床子频道：先发送 $图床频道 子频道ID$ 设置（机器人需在该频道）")
+    data = await _download_bytes(url)
+    md5 = hashlib.md5(data).hexdigest().upper()
+    ok, resp = await sender.send_to_channel(bed, f"图床备份 MD5:{md5}", image=url)
+    if not ok:
+        raise CKError(f"$图床$ 备份到子频道失败: {resp}")
+    return f"https://gchat.qpic.cn/qmeetpic/0/0-0-{md5}/0", data
+
+
+def _media_actions(sender) -> dict:
+    """渲染/画图/图床类函数表（事件上下文与定时任务共用）。"""
+
+    async def render(rest):
+        return await _render_action(rest)
+
+    async def draw(rest):
+        return await _draw_action(rest)
+
+    async def image_bed(rest):
+        link, _ = await _image_bed_core(rest.strip(), sender)
+        return link
+
+    async def md_image_bed(rest):
+        # $MD图床 图片URL [宽 高]$ → 备份并转永久链接的 MD 图片片段，未指定尺寸时自动读取
+        args = rest.split()
+        if not args or not args[0]:
+            raise CKError("$MD图床$ 格式：$MD图床 图片URL [宽 高]$")
+        link, data = await _image_bed_core(args[0], sender)
+        if len(args) >= 3 and args[1].isdigit() and args[2].isdigit():
+            return f"![img #{args[1]}px #{args[2]}px]({link})"
+        size = image_size_from_bytes(data)
+        if size:
+            return f"![img #{size[0]}px #{size[1]}px]({link})"
+        return f"![img]({link})"
+
+    return {"渲染": render, "画图": draw, "图床": image_bed, "MD图床": md_image_bed}
 
 
 def _parse_buttons(spec: str, small: bool = False):
@@ -766,7 +891,137 @@ async def ck_lifecycle(event, match):
     return True
 
 
+def _sched_actions(bot, task: dict) -> dict:
+    """定时任务执行环境的函数表：无事件对象，基于 bot.sender 直发。"""
+    sender = bot.sender
+
+    async def send_to_user(uid, content):
+        await sender.send_to_user(uid, content)
+
+    async def send_to_group(gid, content):
+        await sender.send_to_group(gid, content)
+
+    async def send_to_channel(cid, content):
+        await sender.send_to_channel(cid, content)
+
+    async def force_wakeup(uid, content):
+        await sender.force_wakeup(uid, content)
+
+    async def send_guild_dm(uid, content):
+        gid = task.get("guild_id") or ""
+        ok, data = await sender._request(
+            "POST", "/users/@me/dms",
+            json={"recipient_id": uid, "source_guild_id": gid})
+        dms_gid = str((data or {}).get("guild_id", "") or "") if ok else ""
+        if not dms_gid:
+            raise RuntimeError(f"创建频道私信会话失败: {data}")
+        await sender._request("POST", f"/dms/{dms_gid}/messages", json={"content": content})
+
+    async def share_link(data):
+        return await sender.get_share_link(data)
+
+    async def open_api(method, path, payload):
+        kwargs = {}
+        if payload is not None:
+            kwargs["json"] = payload
+        return await sender._request(method, path, **kwargs)
+
+    actions = {
+        "主动私聊": send_to_user,
+        "主动群发": send_to_group,
+        "主动频道": send_to_channel,
+        "频道私聊": send_guild_dm,
+        "强制召回": force_wakeup,
+        "邀请链接": share_link,
+        "官方API": open_api,
+    }
+    actions.update(_media_actions(sender))
+    return actions
+
+
+async def _sched_send_text(bot, task: dict, text: str) -> None:
+    """定时任务文本输出默认发回创建任务时所在的会话。"""
+    if task.get("channel_id"):
+        await bot.sender.send_to_channel(task["channel_id"], text)
+    elif task.get("group_id"):
+        await bot.sender.send_to_group(task["group_id"], text)
+    elif task.get("user_id"):
+        await bot.sender.send_to_user(task["user_id"], text)
+
+
+async def _sched_send_image(bot, task: dict, content: str) -> None:
+    """定时任务图片输出：频道直发 URL，群/私聊走主动图片接口。"""
+    if task.get("channel_id"):
+        if is_http_url(content):
+            await bot.sender.send_to_channel(task["channel_id"], "", image=content)
+        else:
+            logger.warning("定时任务频道图片仅支持 URL（可先用 $图床$ 转链）: %s", content)
+        return
+    if is_http_url(content):
+        data = await _download_bytes(content)
+    else:
+        data, _ = _resolve_local_media(content)
+        if data is None:
+            logger.warning("定时任务图片不存在: %s", content)
+            return
+    if task.get("group_id"):
+        await bot.sender.send_image("group", task["group_id"], data)
+    elif task.get("user_id"):
+        await bot.sender.send_image("user", task["user_id"], data)
+
+
+async def _run_cron_task(name: str, task: dict) -> None:
+    """到点执行定时任务：以任务指令触发词库块，文本输出主动发回目标会话。"""
+    bot = _get_bot(task.get("appid"))
+    if not bot:
+        logger.warning("定时任务 %s 找不到 bot 实例 (appid=%s)", name, task.get("appid"))
+        return
+
+    async def send(c):
+        text = "".join(s["content"] for s in c.outputs if s["type"] == "text").strip()
+        if c.errors:
+            text = (text + "\n⚠ " + "\n⚠ ".join(c.errors)).strip()
+        if text:
+            await _sched_send_text(bot, task, text)
+        for seg in c.outputs:
+            if seg["type"] == "image" and seg["content"]:
+                await _sched_send_image(bot, task, seg["content"])
+
+    ctx = Ctx(
+        message=task.get("command", ""),
+        user_id=task.get("user_id", ""),
+        group_id=task.get("group_id", ""),
+        guild_id=task.get("guild_id", ""),
+        channel_id=task.get("channel_id", ""),
+        appid=task.get("appid", ""),
+        robot_name=bot.name or "",
+        robot_qq=str(bot.robot_qq or ""),
+        chat_type=task.get("chat_type", ""),
+        extras={"事件类型": "定时任务", "任务名": name},
+        send=send,
+        actions=_sched_actions(bot, task),
+    )
+    try:
+        handled = await engine.handle(ctx)
+        if not handled:
+            logger.warning("定时任务 %s 未命中任何词库指令: %s", name, task.get("command"))
+            return
+        await send(ctx)
+    except Exception as exc:
+        report_error(PLUGIN, "词库", exc, context={"phase": "定时任务", "task": name})
+
+
+cron_manager = CronManager(_run_cron_task)
+engine.cron_manager = cron_manager
+
+
 @on_load
 async def _init():
     engine.load()
     await engine.run_init()
+    cron_manager.start()
+
+
+@on_unload
+async def _cleanup():
+    cron_manager.stop()
