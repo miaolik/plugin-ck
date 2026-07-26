@@ -558,6 +558,7 @@ async function openDict(name) {
   document.getElementById('editor').value = r.content;
   document.getElementById('cur-name').textContent = name + '.txt';
   document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('backdrop').classList.remove('show');
   loadDicts();
 }
 async function saveDict() {
