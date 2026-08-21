@@ -258,6 +258,31 @@ async def test_call_func_cron_dispatch():
         await eng._call_func("定时列表", ctx, 0)
 
 
+@pytest.mark.asyncio
+async def test_call_func_group_management_actions():
+    calls = []
+
+    async def mute_status(rest):
+        calls.append(("status", rest))
+        return '{"global_rule":{"mode":"none"},"members":[]}'
+
+    async def mute(rest):
+        calls.append(("mute", rest))
+        return '{"success":true}'
+
+    eng = CKEngine()
+    ctx = Ctx(actions={"群禁言状态": mute_status, "群禁言": mute})
+    assert await eng._call_func("群禁言状态", ctx, 0) == '{"global_rule":{"mode":"none"},"members":[]}'
+    assert await eng._call_func("群禁言 u1 30", ctx, 0) == '{"success":true}'
+    assert calls == [("status", ""), ("mute", "u1 30")]
+
+
+@pytest.mark.asyncio
+async def test_call_func_group_management_missing_action():
+    with pytest.raises(CKError, match="当前环境不支持"):
+        await CKEngine()._call_func("入群申请列表", Ctx(), 0)
+
+
 async def test_call_func_url_encode_decode():
     assert await call("URLEncoder a b") == "a%20b"
     assert await call("URLDecoder a%20b") == "a b"
