@@ -104,6 +104,25 @@ def test_event_extras_mapping(main_mod):
     assert extras["消息来源"] == "src"
 
 
+@pytest.mark.asyncio
+async def test_audit_review_qa_masks_question_and_answer_on_failure(main_mod, monkeypatch):
+    async def fake_censor(text):
+        conclusion = "不合规" if "bad" in text else "合规"
+        return json.dumps({"success": True, "conclusion": conclusion})
+
+    monkeypatch.setattr(main_mod.engine, "censor_text", fake_censor)
+    result = await main_mod._audit_review_qa([
+        {"question": "good question", "answer": "bad answer"},
+        {"question": "bad question", "answer": "good answer"},
+        {"question": "", "answer": ""},
+    ])
+    assert result == [
+        {"question": "good question", "answer": "**********", "question_audit": "合规", "answer_audit": "已隐藏"},
+        {"question": "************", "answer": "good answer", "question_audit": "已隐藏", "answer_audit": "合规"},
+        {"question": "", "answer": "", "question_audit": "已隐藏", "answer_audit": "已隐藏"},
+    ]
+
+
 # ---- 成员缓存 ----
 
 @pytest.fixture

@@ -7,6 +7,7 @@ import sys
 import time
 import json
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiohttp
@@ -259,6 +260,52 @@ def _event_extras(event, bot_role: str = "") -> dict:
     }
 
 
+def _mask_text(text: str) -> str:
+    """按字符数脱敏，避免审核失败内容再次出现在消息或日志中。"""
+    return "*" * len(str(text or ""))
+
+
+async def _audit_review_qa(items) -> list:
+    """逐条审核入群问答，审核失败或异常时按默认拒绝策略隐藏。"""
+    safe_items = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "")
+        answer = str(item.get("answer") or "")
+        try:
+            question_result = json.loads(await engine.censor_text(question)) if question else {}
+        except Exception:
+            question_result = {}
+        try:
+            answer_result = json.loads(await engine.censor_text(answer)) if answer else {}
+        except Exception:
+            answer_result = {}
+        question_ok = question_result.get("conclusion") == "合规"
+        answer_ok = answer_result.get("conclusion") == "合规"
+        safe_items.append({
+            "question": question if question_ok else _mask_text(question),
+            "answer": answer if answer_ok else _mask_text(answer),
+            "question_audit": "合规" if question_ok else "已隐藏",
+            "answer_audit": "合规" if answer_ok else "已隐藏",
+        })
+    return safe_items
+
+
+async def _safe_join_request(request: dict) -> dict:
+    """复制入群申请的非敏感字段，并审核后保留问答。"""
+    if not isinstance(request, dict):
+        return {}
+    out = {key: value for key, value in request.items()
+           if key not in {"verify_info", "review_qa_list", "question", "answer"}}
+    verify_info = request.get("verify_info") or {}
+    qa = request.get("review_qa_list")
+    if qa is None and isinstance(verify_info, dict):
+        qa = verify_info.get("review_qa_list")
+    out["review_qa_list"] = await _audit_review_qa(qa)
+    return out
+
+
 def build_ctx(event, bot_role: str = "") -> Ctx:
     async def send(ctx):
         await send_ctx(event, ctx)
@@ -345,6 +392,64 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
             kwargs["json"] = payload
         return await event.sender._request(method, path, **kwargs)
 
+    async def group_mute_status(rest):
+        if not event.group_id:
+            raise CKError("$群禁言状态$ 仅群聊场景可用")
+        setting = await event.sender.get_group_restrict_chat_setting(event.group_id)
+        return json.dumps(setting or {}, ensure_ascii=False)
+
+    async def group_mute(rest):
+        if not event.group_id:
+            raise CKError("$群禁言$ 仅群聊场景可用")
+        args = rest.split()
+        if len(args) != 2 or not args[0] or not args[1].isdigit() or int(args[1]) <= 0:
+            raise CKError("$群禁言$ 格式：$群禁言 用户ID 分钟$")
+        expire_at = (datetime.now().astimezone() + timedelta(minutes=int(args[1]))).isoformat(timespec="seconds")
+        ok, response = await event.sender.set_group_member_mute(event.group_id, [{
+            "op": "add", "member_openid": args[0], "mute_expire_at": expire_at,
+        }])
+        return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
+
+    async def unmute_group(rest):
+        if not event.group_id or not rest.strip():
+            raise CKError("$解除群禁言$ 格式：$解除群禁言 用户ID$")
+        ok, response = await event.sender.set_group_member_mute(event.group_id, [{
+            "op": "del", "member_openid": rest.strip(),
+        }])
+        return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
+
+    async def join_requests(rest):
+        if not event.group_id:
+            raise CKError("$入群申请列表$ 仅群聊场景可用")
+        args = rest.split()
+        cursor = args[0] if args else ""
+        limit = args[1] if len(args) > 1 else 20
+        page = await event.sender.get_group_join_requests(event.group_id, cursor=cursor, limit=limit)
+        if not page:
+            return json.dumps({"list": [], "next_cursor": ""}, ensure_ascii=False)
+        safe_page = dict(page)
+        safe_page["list"] = [await _safe_join_request(item) for item in page.get("list", [])]
+        return json.dumps(safe_page, ensure_ascii=False)
+
+    async def review_join_request(rest):
+        if not event.group_id:
+            raise CKError("$入群审核$ 仅群聊场景可用")
+        args = rest.split(" ", 3)
+        if len(args) < 3 or args[1] not in ("approve", "decline"):
+            raise CKError("$入群审核$ 格式：$入群审核 用户ID approve/decline 申请ID [拒绝理由]")
+        reason = args[3] if len(args) > 3 else ""
+        ok, response = await event.sender.review_group_join_request(
+            event.group_id, args[0], args[1], join_request_id=args[2],
+            reject_reason=reason,
+        )
+        return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
+
+    async def refresh_group(rest):
+        if not event.group_id:
+            raise CKError("$群资料刷新$ 仅群聊场景可用")
+        result = await event.sender.refresh_group_info(event.group_id)
+        return json.dumps(result or {}, ensure_ascii=False)
+
     actions = {
         "主动私聊": send_to_user,
         "主动群发": send_to_group,
@@ -356,6 +461,12 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         "群成员": group_member,
         "机器人成员": bot_member,
         "官方API": open_api,
+        "群禁言状态": group_mute_status,
+        "群禁言": group_mute,
+        "解除群禁言": unmute_group,
+        "入群申请列表": join_requests,
+        "入群审核": review_join_request,
+        "群资料刷新": refresh_group,
     }
     actions.update(_media_actions(event.sender))
 
@@ -1153,6 +1264,33 @@ _LIFECYCLE_BLOCKS = {
     "GUILD_MEMBER_ADD": "入频道欢迎",
     "GUILD_MEMBER_REMOVE": "退频道提示",
 }
+
+
+@handler(r"^[\s\S]*$", name="词库入群申请事件", desc="审核并触发入群申请词库", priority=-100,
+         event_types=["GROUP_JOIN_REQUEST"])
+async def ck_join_request(event, match):
+    """入群申请问答先逐条审核，词库只收到脱敏后的展示数据。"""
+    if not event.group_id or engine.find_block("入群申请") is None:
+        return
+    ctx = build_ctx(event)
+    ctx.message = "入群申请"
+    safe_qa = await _audit_review_qa(getattr(event, "review_qa_list", []))
+    ctx.extras.update({
+        "入群申请ID": str(getattr(event, "join_request_id", "") or ""),
+        "申请时间": str(getattr(event, "apply_at", "") or ""),
+        "申请来源": str(getattr(event, "apply_source", "") or ""),
+        "邀请人": str(getattr(event, "invited_by", "") or ""),
+        "审核方式": str(getattr(event, "verify_method", "") or ""),
+        "入群问答": json.dumps(safe_qa, ensure_ascii=False),
+    })
+    matched = await engine.handle(ctx)
+    if not matched:
+        return
+    _append_errors(ctx)
+    text = "".join(o["content"] for o in ctx.outputs if o["type"] == "text").strip()
+    if text:
+        await event.send_to_group(event.group_id, text)
+    return True
 
 
 @handler(r"^[\s\S]*$", name="词库进退事件", desc="入群/退群/入频道/退频道等事件触发词库", priority=-100,
