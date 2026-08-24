@@ -424,7 +424,12 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
             raise CKError("$入群申请列表$ 仅群聊场景可用")
         args = rest.split()
         cursor = args[0] if args else ""
-        limit = args[1] if len(args) > 1 else 20
+        try:
+            limit = int(args[1]) if len(args) > 1 else 20
+        except ValueError as exc:
+            raise CKError("$入群申请列表$ 数量须为 1 到 100 的整数") from exc
+        if not 1 <= limit <= 100:
+            raise CKError("$入群申请列表$ 数量须为 1 到 100 的整数")
         page = await event.sender.get_group_join_requests(event.group_id, cursor=cursor, limit=limit)
         if not page:
             return json.dumps({"list": [], "next_cursor": ""}, ensure_ascii=False)
@@ -1420,6 +1425,8 @@ async def ck_join_request(event, match):
         return
     ctx = build_ctx(event)
     ctx.message = "入群申请"
+    # 原始载荷含未审核问答，词库在此事件中只能访问已审核后的专用变量。
+    ctx.raw_json = ""
     safe_qa = await _audit_review_qa(getattr(event, "review_qa_list", []))
     ctx.extras.update({
         "入群申请ID": str(getattr(event, "join_request_id", "") or ""),
@@ -1435,7 +1442,13 @@ async def ck_join_request(event, match):
     _append_errors(ctx)
     text = "".join(o["content"] for o in ctx.outputs if o["type"] == "text").strip()
     if text:
-        await event.send_to_group(event.group_id, text)
+        try:
+            await event.send_to_group(event.group_id, text)
+        except Exception as exc:
+            report_error(PLUGIN, "词库", exc, context={
+                "phase": "入群申请事件输出", "group_id": event.group_id,
+                "join_request_id": ctx.extras["入群申请ID"],
+            })
     return True
 
 

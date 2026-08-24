@@ -125,6 +125,49 @@ async def test_audit_review_qa_masks_question_and_answer_on_failure(main_mod, mo
     ]
 
 
+@pytest.mark.asyncio
+async def test_join_request_hides_raw_payload_from_json_variable(main_mod, monkeypatch):
+    async def fake_censor(text):
+        return json.dumps({"success": True, "conclusion": "合规"})
+
+    class JoinEvent(FakeEvent):
+        def __init__(self):
+            super().__init__(
+                group_id="g1", user_id="u1", is_group=True,
+                raw={"d": {"verify_info": {"review_qa_list": [
+                    {"question": "private question", "answer": "private answer"},
+                ]}}},
+            )
+            self.review_qa_list = [{"question": "private question", "answer": "private answer"}]
+            self.join_request_id = "request-1"
+            self.apply_at = ""
+            self.apply_source = ""
+            self.invited_by = ""
+            self.verify_method = "admin_review_qa"
+            self.sent = []
+            self.sender = object()
+
+        async def send_to_group(self, group_id, content):
+            self.sent.append((group_id, content))
+
+    event = JoinEvent()
+    monkeypatch.setattr(main_mod, "_get_bot", lambda appid: None)
+    monkeypatch.setattr(main_mod.engine, "censor_text", fake_censor)
+    monkeypatch.setattr(main_mod.engine, "find_block", lambda message: object() if message == "入群申请" else None)
+
+    async def handle(ctx):
+        ctx.out_text("raw=" + ctx.raw_json + ";qa=" + ctx.extras["入群问答"])
+        return True
+
+    monkeypatch.setattr(main_mod.engine, "handle", handle)
+    await main_mod.ck_join_request(event, None)
+    assert event.sent
+    output = event.sent[0][1]
+    assert "private question" in output
+    assert "private answer" in output
+    assert 'raw=' in output and 'raw={"d"' not in output
+
+
 # ---- 成员缓存 ----
 
 @pytest.fixture
