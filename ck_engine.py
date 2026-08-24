@@ -1205,6 +1205,8 @@ class CKEngine:
             return f"![img]({url})"
 
         if name in ("渲染", "画图", "图床", "MD图床",
+                     "画布创建", "画布文字", "画布矩形", "画布图片", "画布导出",
+                     "AI", "AI指定", "AI上下文",
                      "上传图床", "图床状态", "模块状态",
                      "MySQL查", "MySQL执行",
                      "Redis读", "Redis写", "Redis删", "Redis自增",

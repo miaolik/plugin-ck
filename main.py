@@ -3,6 +3,7 @@
 """词库插件入口：GQ 风格词库引擎 + Web 词库编辑器。"""
 
 import hashlib
+import html
 import sys
 import time
 import json
@@ -471,7 +472,7 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
     actions.update(_media_actions(event.sender))
 
     bot = _get_bot(event.appid)
-    return Ctx(
+    ctx = Ctx(
         message=_clean_message(event),
         user_id=event.user_id or "",
         username=event.username or _event_get(event, "d/author/username"),
@@ -496,6 +497,17 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         recall=recall,
         actions=actions,
     )
+    async def ai(rest):
+        return await _ai_complete(rest, ctx, "AI")
+
+    async def ai_specified(rest):
+        return await _ai_complete(rest, ctx, "AI指定")
+
+    async def ai_context(rest):
+        return await _ai_complete(rest, ctx, "AI上下文")
+
+    ctx.actions.update({"AI": ai, "AI指定": ai_specified, "AI上下文": ai_context})
+    return ctx
 
 
 def _resolve_local_media(path_str: str):
@@ -809,6 +821,7 @@ def _module_status_json() -> str:
     ds = _get_module("datastore")
     hosting = _get_module("image_hosting")
     onebot = _get_module("onebot_adapter")
+    ai_llm = _get_module("ai_llm")
     status = {
         "playwright": bool(pw is not None and pw.is_available()),
         "datastore": {
@@ -818,6 +831,7 @@ def _module_status_json() -> str:
         },
         "image_hosting": hosting.status() if hosting is not None else {"启用": False},
         "onebot_adapter": onebot is not None,
+        "ai_llm": ai_llm is not None,
     }
     return json.dumps(status, ensure_ascii=False)
 
@@ -876,6 +890,78 @@ async def _draw_action(rest: str) -> str:
     return _save_render(img)
 
 
+_CANVAS_SIZE_RE = re.compile(r"^(\d{1,4})[xX\*](\d{1,4})$")
+_CANVAS_COLOR_RE = re.compile(r"^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20}|transparent)$")
+
+
+def _canvas_color(value: str, label: str) -> str:
+    color = value.strip()
+    if not _CANVAS_COLOR_RE.fullmatch(color):
+        raise CKError(f"${label}$ 颜色格式无效")
+    return color
+
+
+def _canvas_add(canvas: dict, element: str) -> None:
+    if len(canvas["elements"]) >= 100:
+        raise CKError("$画布$ 元素数量上限为 100")
+    canvas["elements"].append(element)
+
+
+def _canvas_html(canvas: dict) -> str:
+    return (
+        "<!doctype html><html><body style=\"margin:0;overflow:hidden\">"
+        f"<div style=\"position:relative;width:{canvas['width']}px;height:{canvas['height']}px;"
+        f"overflow:hidden;background:{canvas['background']}\">"
+        + "".join(canvas["elements"])
+        + "</div></body></html>"
+    )
+
+
+async def _ai_complete(rest: str, ctx: Ctx, mode: str) -> str:
+    """通过 AI LLM 模块完成纯文本生成，模型配置统一由框架管理。"""
+    try:
+        from modules.ai_llm import get_service
+    except ImportError as exc:
+        raise CKError("AI LLM 模块未安装：请在插件市场安装并启用 ai_llm") from exc
+    service = get_service()
+    if service is None:
+        raise CKError("AI LLM 服务未启用：请在框架模块页启用并配置模型")
+    provider_id = model = ""
+    session_id = f"ck:{ctx.appid}:{ctx.chat_type}:{ctx.group_id or ctx.user_id or ctx.channel_id}"
+    if mode == "AI指定":
+        parts = rest.split(" ", 2)
+        if len(parts) != 3:
+            raise CKError("$AI指定$ 格式：$AI指定 接口ID 模型名 提示词$")
+        provider_id, model, prompt = parts
+    elif mode == "AI上下文":
+        parts = rest.split(" ", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1].strip():
+            raise CKError("$AI上下文$ 格式：$AI上下文 会话ID 提示词$")
+        session_id = f"ck:{ctx.appid}:{parts[0]}"
+        prompt = parts[1]
+    else:
+        prompt = rest
+    prompt = prompt.strip()
+    if not prompt:
+        raise CKError(f"${mode}$ 缺少提示词")
+    if len(prompt) > 16000:
+        raise CKError(f"${mode}$ 提示词长度不能超过 16000 字符")
+    try:
+        result = await service.complete(
+            messages=[{"role": "user", "content": prompt}],
+            provider_id=provider_id,
+            model=model,
+            session_id=session_id,
+            consumer_plugin="ck",
+        )
+    except Exception as exc:
+        raise CKError(f"${mode}$ 调用失败: {exc}") from exc
+    text = result.get("text") if isinstance(result, dict) else ""
+    if not isinstance(text, str) or not text:
+        raise CKError(f"${mode}$ 未返回文本")
+    return text
+
+
 async def _image_bed_core(url: str, sender):
     """把图片备份到图床子频道，返回 (永久链接, 图片字节)。"""
     if not is_http_url(url):
@@ -891,14 +977,71 @@ async def _image_bed_core(url: str, sender):
     return f"https://gchat.qpic.cn/qmeetpic/0/0-0-{md5}/0", data
 
 
-def _media_actions(sender) -> dict:
-    """渲染/画图/图床类函数表（事件上下文与定时任务共用）。"""
+def _media_actions(sender, *, canvas: dict | None = None) -> dict:
+    """渲染、画布、图床类函数表（事件上下文与定时任务共用）。"""
+    canvas = canvas if canvas is not None else {
+        "width": 800, "height": 450, "background": "#ffffff", "elements": [],
+    }
 
     async def render(rest):
         return await _render_action(rest)
 
     async def draw(rest):
         return await _draw_action(rest)
+
+    async def canvas_create(rest):
+        parts = rest.split()
+        if not parts or not _CANVAS_SIZE_RE.fullmatch(parts[0]):
+            raise CKError("$画布创建$ 格式：$画布创建 宽x高 [背景色]$")
+        match = _CANVAS_SIZE_RE.fullmatch(parts[0])
+        width, height = int(match.group(1)), int(match.group(2))
+        if not 1 <= width <= 2000 or not 1 <= height <= 2000:
+            raise CKError("$画布创建$ 宽高须在 1 到 2000 之间")
+        canvas.update({"width": width, "height": height,
+                       "background": _canvas_color(parts[1], "画布创建") if len(parts) > 1 else "#ffffff",
+                       "elements": []})
+        return ""
+
+    async def canvas_text(rest):
+        parts = rest.split(" ", 4)
+        if len(parts) != 5 or not all(item.isdigit() for item in parts[:3]):
+            raise CKError("$画布文字$ 格式：$画布文字 X Y 字号 颜色 内容$")
+        x, y, size = (int(item) for item in parts[:3])
+        if not 1 <= size <= 200:
+            raise CKError("$画布文字$ 字号须在 1 到 200 之间")
+        color = _canvas_color(parts[3], "画布文字")
+        content = html.escape(parts[4]).replace("\\n", "<br>")
+        _canvas_add(canvas, f'<div style="position:absolute;left:{x}px;top:{y}px;color:{color};font-size:{size}px;line-height:1.2;white-space:pre-wrap">{content}</div>')
+        return ""
+
+    async def canvas_rect(rest):
+        parts = rest.split()
+        if len(parts) not in (5, 6) or not all(item.isdigit() for item in parts[:4]):
+            raise CKError("$画布矩形$ 格式：$画布矩形 X Y 宽 高 颜色 [圆角]$")
+        x, y, width, height = (int(item) for item in parts[:4])
+        if len(parts) == 6 and not parts[5].isdigit():
+            raise CKError("$画布矩形$ 圆角须为整数")
+        radius = int(parts[5]) if len(parts) == 6 else 0
+        color = _canvas_color(parts[4], "画布矩形")
+        _canvas_add(canvas, f'<div style="position:absolute;left:{x}px;top:{y}px;width:{width}px;height:{height}px;background:{color};border-radius:{radius}px"></div>')
+        return ""
+
+    async def canvas_image(rest):
+        parts = rest.split(" ", 4)
+        if len(parts) != 5 or not all(item.isdigit() for item in parts[:4]) or not is_http_url(parts[4]):
+            raise CKError("$画布图片$ 格式：$画布图片 X Y 宽 高 图片URL$")
+        x, y, width, height = (int(item) for item in parts[:4])
+        await _assert_public_url(parts[4])
+        url = html.escape(parts[4], quote=True)
+        _canvas_add(canvas, f'<img src="{url}" style="position:absolute;left:{x}px;top:{y}px;width:{width}px;height:{height}px;object-fit:cover">')
+        return ""
+
+    async def canvas_export(rest):
+        if rest.strip():
+            raise CKError("$画布导出$ 不接受参数")
+        pw = _get_playwright()
+        image = await pw.screenshot_html(_canvas_html(canvas), viewport=(canvas["width"], canvas["height"]), image_format="png")
+        return _save_render(image)
 
     async def image_bed(rest):
         link, _ = await _image_bed_core(rest.strip(), sender)
@@ -968,7 +1111,10 @@ def _media_actions(sender) -> dict:
         return await _mysql_exec_action(rest)
 
     return {
-        "渲染": render, "画图": draw, "图床": image_bed, "MD图床": md_image_bed,
+        "渲染": render, "画图": draw,
+        "画布创建": canvas_create, "画布文字": canvas_text, "画布矩形": canvas_rect,
+        "画布图片": canvas_image, "画布导出": canvas_export,
+        "图床": image_bed, "MD图床": md_image_bed,
         "上传图床": upload_hosting, "图床状态": hosting_status, "模块状态": module_status,
         "MySQL查": mysql_query, "MySQL执行": mysql_exec,
         "Redis读": _redis_get_action, "Redis写": _redis_set_action,
