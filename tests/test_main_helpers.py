@@ -1,6 +1,8 @@
 """main.py 事件解析 / 成员缓存 / 按钮解析 / 发送编排（依赖 ElainaBot_v2 框架，找不到时跳过）。"""
 
 import json
+import sys
+import types
 
 import pytest
 
@@ -121,6 +123,49 @@ async def test_audit_review_qa_masks_question_and_answer_on_failure(main_mod, mo
         {"question": "************", "answer": "good answer", "question_audit": "已隐藏", "answer_audit": "合规"},
         {"question": "", "answer": "", "question_audit": "已隐藏", "answer_audit": "已隐藏"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_join_request_hides_raw_payload_from_json_variable(main_mod, monkeypatch):
+    async def fake_censor(text):
+        return json.dumps({"success": True, "conclusion": "合规"})
+
+    class JoinEvent(FakeEvent):
+        def __init__(self):
+            super().__init__(
+                group_id="g1", user_id="u1", is_group=True,
+                raw={"d": {"verify_info": {"review_qa_list": [
+                    {"question": "private question", "answer": "private answer"},
+                ]}}},
+            )
+            self.review_qa_list = [{"question": "private question", "answer": "private answer"}]
+            self.join_request_id = "request-1"
+            self.apply_at = ""
+            self.apply_source = ""
+            self.invited_by = ""
+            self.verify_method = "admin_review_qa"
+            self.sent = []
+            self.sender = object()
+
+        async def send_to_group(self, group_id, content):
+            self.sent.append((group_id, content))
+
+    event = JoinEvent()
+    monkeypatch.setattr(main_mod, "_get_bot", lambda appid: None)
+    monkeypatch.setattr(main_mod.engine, "censor_text", fake_censor)
+    monkeypatch.setattr(main_mod.engine, "find_block", lambda message: object() if message == "入群申请" else None)
+
+    async def handle(ctx):
+        ctx.out_text("raw=" + ctx.raw_json + ";qa=" + ctx.extras["入群问答"])
+        return True
+
+    monkeypatch.setattr(main_mod.engine, "handle", handle)
+    await main_mod.ck_join_request(event, None)
+    assert event.sent
+    output = event.sent[0][1]
+    assert "private question" in output
+    assert "private answer" in output
+    assert 'raw=' in output and 'raw={"d"' not in output
 
 
 # ---- 成员缓存 ----
@@ -265,6 +310,46 @@ def test_module_status_json(main_mod, monkeypatch):
     assert status["playwright"] is False
     assert status["datastore"]["mysql"] is False
     assert status["onebot_adapter"] is False
+    assert status["ai_llm"] is False
+
+
+@pytest.mark.asyncio
+async def test_ai_complete_uses_framework_service(main_mod, monkeypatch):
+    calls = []
+
+    class Service:
+        async def complete(self, **kwargs):
+            calls.append(kwargs)
+            return {"text": "模型回复"}
+
+    package = types.ModuleType("modules")
+    module = types.ModuleType("modules.ai_llm")
+    module.get_service = lambda: Service()
+    monkeypatch.setitem(sys.modules, "modules", package)
+    monkeypatch.setitem(sys.modules, "modules.ai_llm", module)
+    from ck_engine import Ctx
+    ctx = Ctx(appid="app", chat_type="group", group_id="g1")
+    assert await main_mod._ai_complete("你好", ctx, "AI") == "模型回复"
+    assert calls[0]["session_id"] == "ck:app:group:g1"
+    assert calls[0]["consumer_plugin"] == "ck"
+    assert calls[0]["messages"] == [{"role": "user", "content": "你好"}]
+
+
+@pytest.mark.asyncio
+async def test_canvas_actions_render_expected_html(main_mod, monkeypatch):
+    class FakePlaywright:
+        async def screenshot_html(self, html, **kwargs):
+            assert "词库标题" in html
+            assert "#4f46e5" in html
+            return b"PNG"
+
+    monkeypatch.setattr(main_mod, "_get_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(main_mod, "_save_render", lambda data: "渲染/test.png")
+    actions = main_mod._media_actions(object())
+    await actions["画布创建"]("800x450 #ffffff")
+    await actions["画布矩形"]("20 20 400 80 #4f46e5 12")
+    await actions["画布文字"]("40 40 24 white 词库标题")
+    assert await actions["画布导出"]("") == "渲染/test.png"
 
 
 def test_split_viewport(main_mod):
