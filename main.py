@@ -191,11 +191,19 @@ def _event_ats(event) -> list:
 
 
 _URL_TOKEN_RE = re.compile(r"\s*<https?://[^>\s]+>")
+_MENTION_TOKEN_RE = re.compile(r"^<@([^>\s]+)>$")
 
 
 def _clean_message(event) -> str:
     """去掉框架追加进 content 的 <图片URL> 占位，避免污染 %参数N%/%括号N%。"""
     return _URL_TOKEN_RE.sub("", event.content or "").strip()
+
+
+def _member_openid(value: str) -> str:
+    """将 QQ 群消息正文中的 <@成员ID> 占位符转换为成员 ID。"""
+    value = value.strip()
+    match = _MENTION_TOKEN_RE.fullmatch(value)
+    return match.group(1) if match else value
 
 
 def _event_raw_json(event) -> str:
@@ -408,17 +416,19 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         args = rest.split()
         if len(args) != 2 or not args[0] or not args[1].isdigit() or int(args[1]) <= 0:
             raise CKError("$群禁言$ 格式：$群禁言 用户ID 分钟$")
+        member_openid = _member_openid(args[0])
         expire_at = (datetime.now().astimezone() + timedelta(minutes=int(args[1]))).isoformat(timespec="seconds")
         ok, response = await event.sender.set_group_member_mute(event.group_id, [{
-            "op": "add", "member_openid": args[0], "mute_expire_at": expire_at,
+            "op": "add", "member_openid": member_openid, "mute_expire_at": expire_at,
         }])
         return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
 
     async def unmute_group(rest):
         if not event.group_id or not rest.strip():
             raise CKError("$解除群禁言$ 格式：$解除群禁言 用户ID$")
+        member_openid = _member_openid(rest)
         ok, response = await event.sender.set_group_member_mute(event.group_id, [{
-            "op": "del", "member_openid": rest.strip(),
+            "op": "del", "member_openid": member_openid,
         }])
         return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
 
