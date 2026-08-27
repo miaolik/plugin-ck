@@ -60,6 +60,11 @@ def test_event_ats(main_mod):
     assert main_mod._event_ats(ev) == ["111", "222"]
 
 
+def test_member_openid_unwraps_group_mention_token(main_mod):
+    assert main_mod._member_openid("<@89969F47893EED31516183D403EC911B>") == "89969F47893EED31516183D403EC911B"
+    assert main_mod._member_openid("member-openid") == "member-openid"
+
+
 def test_event_raw_json(main_mod):
     ev = FakeEvent(raw={"d": {"k": "v"}})
     assert json.loads(main_mod._event_raw_json(ev)) == {"d": {"k": "v"}}
