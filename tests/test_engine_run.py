@@ -238,6 +238,19 @@ def test_group_mute_dictionary_uses_mentioned_member_id():
     assert "已禁言 member-openid" in out
     assert ctx.errors == []
 
+    no_space_out, no_space_ctx = run(
+        eng,
+        "群禁言@成员 30",
+        group_id="g1",
+        role="admin",
+        ats=["member-openid"],
+        actions={"群禁言": mute},
+    )
+
+    assert calls == ["member-openid 30", "member-openid 30"]
+    assert "已禁言 member-openid" in no_space_out
+    assert no_space_ctx.errors == []
+
 
 # ---- _call_func 纯函数 ----
 
