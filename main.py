@@ -29,7 +29,7 @@ logger = get_logger(PLUGIN, "词库")
 __plugin_meta__ = {
     "name": "词库",
     "description": "GQ 风格词库引擎：变量/正则/如果判断/循环遍历/读写数据/排行榜/数据库/访问URL/按钮/引用/撤回/主动消息/多消息类型，含 Web 词库编辑器",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "author": "miaolik",
 }
 
