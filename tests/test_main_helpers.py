@@ -56,8 +56,16 @@ def test_event_images_dedup_and_content_type(main_mod):
 
 
 def test_event_ats(main_mod):
-    ev = FakeEvent(mentions=[{"id": 111}, {"noid": 1}, "x", {"id": "222"}])
+    ev = FakeEvent(mentions=[{"id": 111}, {"id": "bot", "is_you": True}, {"noid": 1}, "x", {"id": "222"}, {"id": "all", "scope": "all"}])
     assert main_mod._event_ats(ev) == ["111", "222"]
+
+
+def test_clean_message_removes_bot_mention_only(main_mod):
+    ev = FakeEvent(
+        content="<@bot-openid> 群禁言 <@member-openid> 1",
+        mentions=[{"id": "bot-openid", "is_you": True}, {"id": "member-openid"}],
+    )
+    assert main_mod._clean_message(ev) == "群禁言 <@member-openid> 1"
 
 
 def test_member_openid_unwraps_group_mention_token(main_mod):

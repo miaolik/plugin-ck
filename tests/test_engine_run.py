@@ -251,6 +251,62 @@ def test_group_mute_dictionary_uses_mentioned_member_id():
     assert "已禁言 member-openid" in no_space_out
     assert no_space_ctx.errors == []
 
+    stripped_out, stripped_ctx = run(
+        eng,
+        "群禁言 30",
+        group_id="g1",
+        role="admin",
+        ats=["member-openid"],
+        actions={"群禁言": mute},
+    )
+
+    assert calls == ["member-openid 30", "member-openid 30", "member-openid 30"]
+    assert "已禁言 member-openid" in stripped_out
+    assert stripped_ctx.errors == []
+
+    batch_out, batch_ctx = run(
+        eng,
+        "群禁言 30",
+        group_id="g1",
+        role="admin",
+        ats=["member-openid-1", "member-openid-2"],
+        actions={"群禁言": mute},
+    )
+
+    assert calls[-1] == "member-openid-1,member-openid-2 30"
+    assert "已禁言 member-openid-1,member-openid-2" in batch_out
+    assert batch_ctx.errors == []
+
+    unmute_calls = []
+
+    async def unmute(rest):
+        unmute_calls.append(rest)
+        return '{"success":true}'
+
+    unmuted_out, unmuted_ctx = run(
+        eng,
+        "解除群禁言",
+        group_id="g1",
+        role="admin",
+        ats=["member-openid"],
+        actions={"解除群禁言": unmute},
+    )
+
+    assert unmute_calls == ["member-openid"]
+    assert "已解除 member-openid 的禁言" in unmuted_out
+    assert unmuted_ctx.errors == []
+
+    missing_target_out, missing_target_ctx = run(
+        eng,
+        "解除群禁言",
+        group_id="g1",
+        role="admin",
+        actions={"解除群禁言": unmute},
+    )
+
+    assert "用法：解除群禁言" in missing_target_out
+    assert missing_target_ctx.errors == []
+
 
 # ---- _call_func 纯函数 ----
 

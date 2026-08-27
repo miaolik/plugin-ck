@@ -185,7 +185,7 @@ def _event_images(event) -> list:
 def _event_ats(event) -> list:
     ids = []
     for m in event.mentions or []:
-        if isinstance(m, dict) and m.get("id"):
+        if isinstance(m, dict) and m.get("id") and not m.get("is_you") and m.get("scope") != "all":
             ids.append(str(m["id"]))
     return ids
 
@@ -195,8 +195,12 @@ _MENTION_TOKEN_RE = re.compile(r"^<@([^>\s]+)>$")
 
 
 def _clean_message(event) -> str:
-    """去掉框架追加进 content 的 <图片URL> 占位，避免污染 %参数N%/%括号N%。"""
-    return _URL_TOKEN_RE.sub("", event.content or "").strip()
+    """清理图片占位和机器人自身提及，保留用户提及供词库解析。"""
+    content = event.content or ""
+    for mention in event.mentions or []:
+        if isinstance(mention, dict) and mention.get("is_you") and mention.get("id"):
+            content = re.sub(rf"\s*<@{re.escape(str(mention['id']))}>", "", content)
+    return _URL_TOKEN_RE.sub("", content).strip()
 
 
 def _member_openid(value: str) -> str:
@@ -415,21 +419,26 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
             raise CKError("$群禁言$ 仅群聊场景可用")
         args = rest.split()
         if len(args) != 2 or not args[0] or not args[1].isdigit() or int(args[1]) <= 0:
-            raise CKError("$群禁言$ 格式：$群禁言 用户ID 分钟$")
-        member_openid = _member_openid(args[0])
+            raise CKError("$群禁言$ 格式：$群禁言 用户ID[,用户ID...] 分钟$")
+        member_openids = [_member_openid(value) for value in args[0].split(",") if value]
+        if not 1 <= len(member_openids) <= 10:
+            raise CKError("$群禁言$ 单次成员数量须在 1 到 10 之间")
         expire_at = (datetime.now().astimezone() + timedelta(minutes=int(args[1]))).isoformat(timespec="seconds")
-        ok, response = await event.sender.set_group_member_mute(event.group_id, [{
-            "op": "add", "member_openid": member_openid, "mute_expire_at": expire_at,
-        }])
+        members = [
+            {"op": "add", "member_openid": member_openid, "mute_expire_at": expire_at}
+            for member_openid in member_openids
+        ]
+        ok, response = await event.sender.set_group_member_mute(event.group_id, members)
         return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
 
     async def unmute_group(rest):
         if not event.group_id or not rest.strip():
             raise CKError("$解除群禁言$ 格式：$解除群禁言 用户ID$")
-        member_openid = _member_openid(rest)
-        ok, response = await event.sender.set_group_member_mute(event.group_id, [{
-            "op": "del", "member_openid": member_openid,
-        }])
+        member_openids = [_member_openid(value) for value in rest.strip().split(",") if value]
+        if not 1 <= len(member_openids) <= 10:
+            raise CKError("$解除群禁言$ 单次成员数量须在 1 到 10 之间")
+        members = [{"op": "del", "member_openid": member_openid} for member_openid in member_openids]
+        ok, response = await event.sender.set_group_member_mute(event.group_id, members)
         return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
 
     async def join_requests(rest):
@@ -1281,17 +1290,21 @@ async def _send_ark(event, spec: str) -> None:
 @handler(r"^[\s\S]*$", name="词库", desc="GQ 风格词库触发", priority=-100,
          event_types=["GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE",
                       "C2C_MESSAGE_CREATE", "AT_MESSAGE_CREATE",
-                      "DIRECT_MESSAGE_CREATE", "MESSAGE_CREATE"])
+                      "DIRECT_MESSAGE_CREATE", "MESSAGE_CREATE"], ignore_at_check=True)
 async def ck_dispatch(event, match):
     if getattr(event, "is_group", False):
         _members_record(event)
     message = _clean_message(event)
+    logger.debug("词库收到消息 (type=%s, group=%s, at_self=%s, mentions=%d)",
+                getattr(event, "event_type", ""), getattr(event, "group_id", ""),
+                getattr(event, "is_at_self", False), len(getattr(event, "mentions", []) or []))
     if not message:
         return
     # 仅在确有词库块命中时才查机器人身份，避免每条群消息都打接口
     bot_role = await _bot_role(event) if engine.find_block(message) else ""
     ctx = build_ctx(event, bot_role)
     matched = await engine.handle(ctx)
+    logger.debug("词库处理完成 (matched=%s, errors=%d, outputs=%d)", matched, len(ctx.errors), len(ctx.outputs))
     if not matched:
         return
     _append_errors(ctx)

@@ -47,6 +47,7 @@ def test_sub_vars_unknown_var_left_intact(eng):
 def test_var_value_counts_and_lists(eng):
     ctx = Ctx(ats=["a", "b"], images=["i1"])
     assert eng._var_value("AT数量", ctx) == "2"
+    assert eng._var_value("AT列表", ctx) == "a,b"
     assert eng._var_value("图片数量", ctx) == "1"
     assert eng._var_value("AT0", ctx) == "a"
     assert eng._var_value("AT9", ctx) == ""
