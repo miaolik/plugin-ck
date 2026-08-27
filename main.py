@@ -29,7 +29,7 @@ logger = get_logger(PLUGIN, "词库")
 __plugin_meta__ = {
     "name": "词库",
     "description": "GQ 风格词库引擎：变量/正则/如果判断/循环遍历/读写数据/排行榜/数据库/访问URL/按钮/引用/撤回/主动消息/多消息类型，含 Web 词库编辑器",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "author": "miaolik",
 }
 
@@ -191,11 +191,19 @@ def _event_ats(event) -> list:
 
 
 _URL_TOKEN_RE = re.compile(r"\s*<https?://[^>\s]+>")
+_MENTION_TOKEN_RE = re.compile(r"^<@([^>\s]+)>$")
 
 
 def _clean_message(event) -> str:
     """去掉框架追加进 content 的 <图片URL> 占位，避免污染 %参数N%/%括号N%。"""
     return _URL_TOKEN_RE.sub("", event.content or "").strip()
+
+
+def _member_openid(value: str) -> str:
+    """将 QQ 群消息正文中的 <@成员ID> 占位符转换为成员 ID。"""
+    value = value.strip()
+    match = _MENTION_TOKEN_RE.fullmatch(value)
+    return match.group(1) if match else value
 
 
 def _event_raw_json(event) -> str:
@@ -294,11 +302,14 @@ async def _audit_review_qa(items) -> list:
 
 
 async def _safe_join_request(request: dict) -> dict:
-    """复制入群申请的非敏感字段，并审核后保留问答。"""
+    """仅保留审核所需字段，并审核后保留问答。"""
     if not isinstance(request, dict):
         return {}
-    out = {key: value for key, value in request.items()
-           if key not in {"verify_info", "review_qa_list", "question", "answer"}}
+    allowed_fields = {
+        "user_openid", "member_openid", "join_request_id", "apply_at",
+        "apply_source", "invited_by", "verify_method",
+    }
+    out = {key: request[key] for key in allowed_fields if key in request}
     verify_info = request.get("verify_info") or {}
     qa = request.get("review_qa_list")
     if qa is None and isinstance(verify_info, dict):
@@ -405,17 +416,19 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         args = rest.split()
         if len(args) != 2 or not args[0] or not args[1].isdigit() or int(args[1]) <= 0:
             raise CKError("$群禁言$ 格式：$群禁言 用户ID 分钟$")
+        member_openid = _member_openid(args[0])
         expire_at = (datetime.now().astimezone() + timedelta(minutes=int(args[1]))).isoformat(timespec="seconds")
         ok, response = await event.sender.set_group_member_mute(event.group_id, [{
-            "op": "add", "member_openid": args[0], "mute_expire_at": expire_at,
+            "op": "add", "member_openid": member_openid, "mute_expire_at": expire_at,
         }])
         return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
 
     async def unmute_group(rest):
         if not event.group_id or not rest.strip():
             raise CKError("$解除群禁言$ 格式：$解除群禁言 用户ID$")
+        member_openid = _member_openid(rest)
         ok, response = await event.sender.set_group_member_mute(event.group_id, [{
-            "op": "del", "member_openid": rest.strip(),
+            "op": "del", "member_openid": member_openid,
         }])
         return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
 
@@ -897,6 +910,10 @@ async def _draw_action(rest: str) -> str:
 
 _CANVAS_SIZE_RE = re.compile(r"^(\d{1,4})[xX\*](\d{1,4})$")
 _CANVAS_COLOR_RE = re.compile(r"^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20}|transparent)$")
+_CANVAS_MAX_SIDE = 1200
+_CANVAS_MAX_PIXELS = 1_000_000
+_CANVAS_MAX_ELEMENTS = 40
+_CANVAS_MAX_FONT_SIZE = 120
 
 
 def _canvas_color(value: str, label: str) -> str:
@@ -907,9 +924,19 @@ def _canvas_color(value: str, label: str) -> str:
 
 
 def _canvas_add(canvas: dict, element: str) -> None:
-    if len(canvas["elements"]) >= 100:
-        raise CKError("$画布$ 元素数量上限为 100")
+    if len(canvas["elements"]) >= _CANVAS_MAX_ELEMENTS:
+        raise CKError(f"$画布$ 元素数量上限为 {_CANVAS_MAX_ELEMENTS}")
     canvas["elements"].append(element)
+
+
+def _canvas_bounds(canvas: dict, x: int, y: int, width: int = 0, height: int = 0) -> None:
+    """限制绘制范围，避免单次词库渲染构造超大页面。"""
+    if x < 0 or y < 0 or width < 0 or height < 0:
+        raise CKError("$画布$ 坐标和尺寸须为非负整数")
+    if x > canvas["width"] or y > canvas["height"]:
+        raise CKError("$画布$ 坐标须位于画布范围内")
+    if x + width > canvas["width"] or y + height > canvas["height"]:
+        raise CKError("$画布$ 元素须位于画布范围内")
 
 
 def _canvas_html(canvas: dict) -> str:
@@ -932,7 +959,9 @@ async def _ai_complete(rest: str, ctx: Ctx, mode: str) -> str:
     if service is None:
         raise CKError("AI LLM 服务未启用：请在框架模块页启用并配置模型")
     provider_id = model = ""
-    session_id = f"ck:{ctx.appid}:{ctx.chat_type}:{ctx.group_id or ctx.user_id or ctx.channel_id}"
+    conversation_id = ctx.group_id or ctx.channel_id or ctx.guild_id or ctx.user_id
+    session_scope = f"{ctx.appid}:{ctx.chat_type}:{conversation_id}:{ctx.user_id}"
+    session_id = f"ck:{session_scope}"
     if mode == "AI指定":
         parts = rest.split(" ", 2)
         if len(parts) != 3:
@@ -942,7 +971,8 @@ async def _ai_complete(rest: str, ctx: Ctx, mode: str) -> str:
         parts = rest.split(" ", 1)
         if len(parts) != 2 or not parts[0] or not parts[1].strip():
             raise CKError("$AI上下文$ 格式：$AI上下文 会话ID 提示词$")
-        session_id = f"ck:{ctx.appid}:{parts[0]}"
+        custom_id = hashlib.sha256(parts[0].encode("utf-8")).hexdigest()[:16]
+        session_id = f"ck:{session_scope}:{custom_id}"
         prompt = parts[1]
     else:
         prompt = rest
@@ -960,7 +990,8 @@ async def _ai_complete(rest: str, ctx: Ctx, mode: str) -> str:
             consumer_plugin="ck",
         )
     except Exception as exc:
-        raise CKError(f"${mode}$ 调用失败: {exc}") from exc
+        report_error(PLUGIN, "词库", exc, context={"phase": "AI LLM", "mode": mode})
+        raise CKError(f"${mode}$ 调用失败，请稍后重试") from exc
     text = result.get("text") if isinstance(result, dict) else ""
     if not isinstance(text, str) or not text:
         raise CKError(f"${mode}$ 未返回文本")
@@ -1000,8 +1031,10 @@ def _media_actions(sender, *, canvas: dict | None = None) -> dict:
             raise CKError("$画布创建$ 格式：$画布创建 宽x高 [背景色]$")
         match = _CANVAS_SIZE_RE.fullmatch(parts[0])
         width, height = int(match.group(1)), int(match.group(2))
-        if not 1 <= width <= 2000 or not 1 <= height <= 2000:
-            raise CKError("$画布创建$ 宽高须在 1 到 2000 之间")
+        if not 1 <= width <= _CANVAS_MAX_SIDE or not 1 <= height <= _CANVAS_MAX_SIDE:
+            raise CKError(f"$画布创建$ 宽高须在 1 到 {_CANVAS_MAX_SIDE} 之间")
+        if width * height > _CANVAS_MAX_PIXELS:
+            raise CKError(f"$画布创建$ 像素总数不能超过 {_CANVAS_MAX_PIXELS}")
         canvas.update({"width": width, "height": height,
                        "background": _canvas_color(parts[1], "画布创建") if len(parts) > 1 else "#ffffff",
                        "elements": []})
@@ -1012,8 +1045,9 @@ def _media_actions(sender, *, canvas: dict | None = None) -> dict:
         if len(parts) != 5 or not all(item.isdigit() for item in parts[:3]):
             raise CKError("$画布文字$ 格式：$画布文字 X Y 字号 颜色 内容$")
         x, y, size = (int(item) for item in parts[:3])
-        if not 1 <= size <= 200:
-            raise CKError("$画布文字$ 字号须在 1 到 200 之间")
+        if not 1 <= size <= _CANVAS_MAX_FONT_SIZE:
+            raise CKError(f"$画布文字$ 字号须在 1 到 {_CANVAS_MAX_FONT_SIZE} 之间")
+        _canvas_bounds(canvas, x, y)
         color = _canvas_color(parts[3], "画布文字")
         content = html.escape(parts[4]).replace("\\n", "<br>")
         _canvas_add(canvas, f'<div style="position:absolute;left:{x}px;top:{y}px;color:{color};font-size:{size}px;line-height:1.2;white-space:pre-wrap">{content}</div>')
@@ -1027,6 +1061,7 @@ def _media_actions(sender, *, canvas: dict | None = None) -> dict:
         if len(parts) == 6 and not parts[5].isdigit():
             raise CKError("$画布矩形$ 圆角须为整数")
         radius = int(parts[5]) if len(parts) == 6 else 0
+        _canvas_bounds(canvas, x, y, width, height)
         color = _canvas_color(parts[4], "画布矩形")
         _canvas_add(canvas, f'<div style="position:absolute;left:{x}px;top:{y}px;width:{width}px;height:{height}px;background:{color};border-radius:{radius}px"></div>')
         return ""
@@ -1036,6 +1071,7 @@ def _media_actions(sender, *, canvas: dict | None = None) -> dict:
         if len(parts) != 5 or not all(item.isdigit() for item in parts[:4]) or not is_http_url(parts[4]):
             raise CKError("$画布图片$ 格式：$画布图片 X Y 宽 高 图片URL$")
         x, y, width, height = (int(item) for item in parts[:4])
+        _canvas_bounds(canvas, x, y, width, height)
         await _assert_public_url(parts[4])
         url = html.escape(parts[4], quote=True)
         _canvas_add(canvas, f'<img src="{url}" style="position:absolute;left:{x}px;top:{y}px;width:{width}px;height:{height}px;object-fit:cover">')

@@ -60,6 +60,11 @@ def test_event_ats(main_mod):
     assert main_mod._event_ats(ev) == ["111", "222"]
 
 
+def test_member_openid_unwraps_group_mention_token(main_mod):
+    assert main_mod._member_openid("<@89969F47893EED31516183D403EC911B>") == "89969F47893EED31516183D403EC911B"
+    assert main_mod._member_openid("member-openid") == "member-openid"
+
+
 def test_event_raw_json(main_mod):
     ev = FakeEvent(raw={"d": {"k": "v"}})
     assert json.loads(main_mod._event_raw_json(ev)) == {"d": {"k": "v"}}
@@ -330,9 +335,67 @@ async def test_ai_complete_uses_framework_service(main_mod, monkeypatch):
     from ck_engine import Ctx
     ctx = Ctx(appid="app", chat_type="group", group_id="g1")
     assert await main_mod._ai_complete("你好", ctx, "AI") == "模型回复"
-    assert calls[0]["session_id"] == "ck:app:group:g1"
+    assert calls[0]["session_id"] == "ck:app:group:g1:"
     assert calls[0]["consumer_plugin"] == "ck"
     assert calls[0]["messages"] == [{"role": "user", "content": "你好"}]
+
+
+@pytest.mark.asyncio
+async def test_ai_context_session_is_scoped_to_conversation_and_user(main_mod, monkeypatch):
+    calls = []
+
+    class Service:
+        async def complete(self, **kwargs):
+            calls.append(kwargs)
+            return {"text": "模型回复"}
+
+    package = types.ModuleType("modules")
+    module = types.ModuleType("modules.ai_llm")
+    module.get_service = lambda: Service()
+    monkeypatch.setitem(sys.modules, "modules", package)
+    monkeypatch.setitem(sys.modules, "modules.ai_llm", module)
+    from ck_engine import Ctx
+    first = Ctx(appid="app", chat_type="group", group_id="g1", user_id="u1")
+    second = Ctx(appid="app", chat_type="group", group_id="g1", user_id="u2")
+    await main_mod._ai_complete("shared prompt", first, "AI上下文")
+    await main_mod._ai_complete("shared prompt", second, "AI上下文")
+    assert calls[0]["session_id"] != calls[1]["session_id"]
+    assert calls[0]["session_id"].startswith("ck:app:group:g1:u1:")
+
+
+@pytest.mark.asyncio
+async def test_ai_complete_hides_upstream_error(main_mod, monkeypatch):
+    class Service:
+        async def complete(self, **kwargs):
+            raise RuntimeError("provider secret detail")
+
+    package = types.ModuleType("modules")
+    module = types.ModuleType("modules.ai_llm")
+    module.get_service = lambda: Service()
+    monkeypatch.setitem(sys.modules, "modules", package)
+    monkeypatch.setitem(sys.modules, "modules.ai_llm", module)
+    monkeypatch.setattr(main_mod, "report_error", lambda *args, **kwargs: None)
+    from ck_engine import CKError, Ctx
+    with pytest.raises(CKError, match="调用失败，请稍后重试") as error:
+        await main_mod._ai_complete("你好", Ctx(appid="app"), "AI")
+    assert "provider secret detail" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_safe_join_request_allows_only_review_fields(main_mod, monkeypatch):
+    async def fake_censor(text):
+        return json.dumps({"conclusion": "合规"})
+
+    monkeypatch.setattr(main_mod.engine, "censor_text", fake_censor)
+    result = await main_mod._safe_join_request({
+        "user_openid": "u1", "join_request_id": "r1", "verify_method": "review",
+        "unknown_nested": {"secret": "value"},
+        "verify_info": {"review_qa_list": [{"question": "q", "answer": "a"}]},
+    })
+    assert result == {
+        "user_openid": "u1", "join_request_id": "r1", "verify_method": "review",
+        "review_qa_list": [{"question": "q", "answer": "a", "question_audit": "合规", "answer_audit": "合规"}],
+    }
 
 
 @pytest.mark.asyncio
@@ -350,6 +413,19 @@ async def test_canvas_actions_render_expected_html(main_mod, monkeypatch):
     await actions["画布矩形"]("20 20 400 80 #4f46e5 12")
     await actions["画布文字"]("40 40 24 white 词库标题")
     assert await actions["画布导出"]("") == "渲染/test.png"
+
+
+@pytest.mark.asyncio
+async def test_canvas_rejects_excessive_size_and_out_of_bounds_elements(main_mod):
+    from ck_engine import CKError
+    actions = main_mod._media_actions(object())
+    with pytest.raises(CKError, match="1200"):
+        await actions["画布创建"]("1201x450")
+    await actions["画布创建"]("800x450")
+    with pytest.raises(CKError, match="坐标"):
+        await actions["画布文字"]("801 0 20 black 超出")
+    with pytest.raises(CKError, match="元素须"):
+        await actions["画布矩形"]("790 0 20 10 black")
 
 
 def test_split_viewport(main_mod):

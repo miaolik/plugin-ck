@@ -22,6 +22,11 @@ def run(eng, message, **kw):
     return "".join(o["content"] for o in ctx.outputs if o["type"] == "text"), ctx
 
 
+def make_farm_engine():
+    text = (Path(__file__).resolve().parent.parent / "dicts" / "农场游戏.txt").read_text(encoding="utf-8")
+    return make_engine(text)
+
+
 # ---- find_block / _skip_to ----
 
 def test_find_block_matches_and_respects_internal():
@@ -163,6 +168,52 @@ def test_switch_nested_in_switch():
         "测\n分支:a\n情况:a\n外A\n分支:b\n情况:a\n内A\n情况:b\n内B\n分支尾\n情况:b\n外B\n分支尾")
     out, _ = run(eng, "测")
     assert out == "外A内B"
+
+
+def test_farm_dictionary_supports_new_player_purchase_and_planting(data_dir):
+    from ck_engine import store_write
+
+    eng = make_farm_engine()
+    base = {
+        "user_id": "u1", "group_id": "g1", "chat_type": "group",
+        "extras": {"会话ID": "g1"},
+    }
+
+    menu, menu_ctx = run(eng, "农场", **base)
+    assert "田园农场" in menu
+    assert menu_ctx.md_mode is True
+    assert menu_ctx.errors == []
+
+    locked, locked_ctx = run(eng, "购买种子 番茄", **base)
+    assert "等级不足" in locked
+    assert locked_ctx.errors == []
+
+    bought, bought_ctx = run(eng, "购买种子 小麦", **base)
+    assert "购买成功" in bought
+    assert bought_ctx.errors == []
+
+    planted, planted_ctx = run(eng, "种植 1 小麦", **base)
+    assert "播种完成" in planted
+    assert planted_ctx.errors == []
+
+    growing, growing_ctx = run(eng, "收获 1", **base)
+    assert "作物生长中" in growing
+    assert growing_ctx.errors == []
+
+    store_write("农场/g1/档", "u1_种植时间1", "0")
+    harvested, harvested_ctx = run(eng, "收获 1", **base)
+    assert "收获成功" in harvested
+    assert harvested_ctx.errors == []
+
+    sold, sold_ctx = run(eng, "出售 小麦", **base)
+    assert "出售完成" in sold
+    assert sold_ctx.errors == []
+
+    store_write("农场/g1/档", "u1_等级", "3")
+    store_write("农场/g1/档", "u1_金币", "100")
+    unlocked, unlocked_ctx = run(eng, "解锁土地 2", **base)
+    assert "土地解锁" in unlocked
+    assert unlocked_ctx.errors == []
 
 
 def test_group_mute_dictionary_uses_mentioned_member_id():
