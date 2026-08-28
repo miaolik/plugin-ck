@@ -68,6 +68,14 @@ def test_clean_message_removes_bot_mention_only(main_mod):
     assert main_mod._clean_message(ev) == "群禁言 <@member-openid> 1"
 
 
+def test_clean_message_removes_channel_bot_mention(main_mod):
+    ev = FakeEvent(
+        content="<@!bot-openid> 频道管理",
+        mentions=[{"id": "bot-openid", "is_you": True}],
+    )
+    assert main_mod._clean_message(ev) == "频道管理"
+
+
 def test_member_openid_unwraps_group_mention_token(main_mod):
     assert main_mod._member_openid("<@89969F47893EED31516183D403EC911B>") == "89969F47893EED31516183D403EC911B"
     assert main_mod._member_openid("member-openid") == "member-openid"
@@ -504,6 +512,18 @@ async def test_send_outputs_text_mode_forces_plain(main_mod):
     await main_mod.send_outputs(ev, [{"type": "text", "content": "hi"}],
                                 md_mode=False, text_mode=True)
     assert ev.replies[0][2]["msg_type"] == 0
+
+
+async def test_send_outputs_channel_downgrades_markdown_and_buttons(main_mod):
+    ev = FakeEvent(guild_id="guild-1", channel_id="channel-1")
+    await main_mod.send_outputs(
+        ev,
+        [{"type": "text", "content": "频道管理"}, {"type": "buttons", "content": "确认;ok", "extra": ""}],
+        md_mode=True,
+    )
+    assert len(ev.replies) == 1
+    assert ev.replies[0][2]["msg_type"] == 0
+    assert "buttons" not in ev.replies[0][2]
 
 
 async def test_send_outputs_buttons_only_sends_placeholder(main_mod):
