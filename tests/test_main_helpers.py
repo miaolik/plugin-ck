@@ -60,6 +60,11 @@ def test_event_ats(main_mod):
     assert main_mod._event_ats(ev) == ["111", "222"]
 
 
+def test_event_ats_falls_back_to_channel_raw_mentions(main_mod):
+    ev = FakeEvent(raw={"d": {"mentions": [{"id": "member-1"}, {"id": "bot-1", "bot": True}]}})
+    assert main_mod._event_ats(ev) == ["member-1"]
+
+
 def test_clean_message_removes_bot_mention_only(main_mod):
     ev = FakeEvent(
         content="<@bot-openid> 群禁言 <@member-openid> 1",
