@@ -251,6 +251,91 @@ def test_group_mute_dictionary_uses_mentioned_member_id():
     assert "已禁言 member-openid" in no_space_out
     assert no_space_ctx.errors == []
 
+    stripped_out, stripped_ctx = run(
+        eng,
+        "群禁言 30",
+        group_id="g1",
+        role="admin",
+        ats=["member-openid"],
+        actions={"群禁言": mute},
+    )
+
+    assert calls == ["member-openid 30", "member-openid 30", "member-openid 30"]
+    assert "已禁言 member-openid" in stripped_out
+    assert stripped_ctx.errors == []
+
+    batch_out, batch_ctx = run(
+        eng,
+        "群禁言 30",
+        group_id="g1",
+        role="admin",
+        ats=["member-openid-1", "member-openid-2"],
+        actions={"群禁言": mute},
+    )
+
+    assert calls[-1] == "member-openid-1,member-openid-2 30"
+    assert "已禁言 member-openid-1,member-openid-2" in batch_out
+    assert batch_ctx.errors == []
+
+    unmute_calls = []
+
+    async def unmute(rest):
+        unmute_calls.append(rest)
+        return '{"success":true}'
+
+    unmuted_out, unmuted_ctx = run(
+        eng,
+        "解除群禁言",
+        group_id="g1",
+        role="admin",
+        ats=["member-openid"],
+        actions={"解除群禁言": unmute},
+    )
+
+    assert unmute_calls == ["member-openid"]
+    assert "已解除 member-openid 的禁言" in unmuted_out
+    assert unmuted_ctx.errors == []
+
+    missing_target_out, missing_target_ctx = run(
+        eng,
+        "解除群禁言",
+        group_id="g1",
+        role="admin",
+        actions={"解除群禁言": unmute},
+    )
+
+    assert "用法：解除群禁言" in missing_target_out
+    assert missing_target_ctx.errors == []
+
+
+def test_guild_management_functions_build_expected_api_requests():
+    eng = CKEngine()
+    calls = []
+
+    async def api(method, path, payload):
+        calls.append((method, path, payload))
+        return True, {"ok": True}
+
+    ctx = Ctx(guild_id="guild-1", channel_id="channel-1", actions={"官方API": api})
+
+    async def run_guild_function():
+        assert '"success": true' in await eng._guild_func("频道禁言", "user-1 60", ctx)
+        assert '"success": true' in await eng._guild_func("频道全员禁言", "0", ctx)
+        assert '"success": true' in await eng._guild_func("频道撤回", "message-1", ctx)
+        assert '"success": true' in await eng._guild_func("频道拉黑", "user-2", ctx)
+        assert '"success": true' in await eng._guild_func("身份组加", "user-3 role-1", ctx)
+
+    import asyncio
+    asyncio.run(run_guild_function())
+
+    assert calls == [
+        ("PATCH", "/guilds/guild-1/members/user-1/mute", {"mute_seconds": "60"}),
+        ("PATCH", "/guilds/guild-1/mute", {"mute_seconds": "0"}),
+        ("DELETE", "/channels/channel-1/messages/message-1?hidetip=true", None),
+        ("DELETE", "/guilds/guild-1/members/user-2", {"add_blacklist": True}),
+        ("PUT", "/guilds/guild-1/members/user-3/roles/role-1", {"channel": {"id": "channel-1"}}),
+    ]
+
 
 # ---- _call_func 纯函数 ----
 

@@ -995,6 +995,8 @@ class CKEngine:
             return ctx.robot_qq
         if name in ("AT数量", "AT个数"):
             return str(len(ctx.ats))
+        if name in ("AT列表", "ATList"):
+            return ",".join(ctx.ats)
         if name in ("图片数量", "IMG数量"):
             return str(len(ctx.images))
         if name == "JSON":
