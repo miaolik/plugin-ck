@@ -308,6 +308,35 @@ def test_group_mute_dictionary_uses_mentioned_member_id():
     assert missing_target_ctx.errors == []
 
 
+def test_guild_management_functions_build_expected_api_requests():
+    eng = CKEngine()
+    calls = []
+
+    async def api(method, path, payload):
+        calls.append((method, path, payload))
+        return True, {"ok": True}
+
+    ctx = Ctx(guild_id="guild-1", channel_id="channel-1", actions={"官方API": api})
+
+    async def run_guild_function():
+        assert '"success": true' in await eng._guild_func("频道禁言", "user-1 60", ctx)
+        assert '"success": true' in await eng._guild_func("频道全员禁言", "0", ctx)
+        assert '"success": true' in await eng._guild_func("频道撤回", "message-1", ctx)
+        assert '"success": true' in await eng._guild_func("频道拉黑", "user-2", ctx)
+        assert '"success": true' in await eng._guild_func("身份组加", "user-3 role-1", ctx)
+
+    import asyncio
+    asyncio.run(run_guild_function())
+
+    assert calls == [
+        ("PATCH", "/guilds/guild-1/members/user-1/mute", {"mute_seconds": "60"}),
+        ("PATCH", "/guilds/guild-1/mute", {"mute_seconds": "0"}),
+        ("DELETE", "/channels/channel-1/messages/message-1?hidetip=true", None),
+        ("DELETE", "/guilds/guild-1/members/user-2", {"add_blacklist": True}),
+        ("PUT", "/guilds/guild-1/members/user-3/roles/role-1", {"channel": {"id": "channel-1"}}),
+    ]
+
+
 # ---- _call_func 纯函数 ----
 
 async def call(func_str, **kw):
