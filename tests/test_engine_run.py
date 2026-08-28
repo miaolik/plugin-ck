@@ -337,6 +337,59 @@ def test_guild_management_functions_build_expected_api_requests():
     ]
 
 
+def test_channel_management_text_menu_lists_one_command_per_line():
+    text = (Path(__file__).resolve().parent.parent / "dicts" / "频道管理.txt").read_text(encoding="utf-8")
+    eng = make_engine(text)
+    out, ctx = run(eng, "频道管理普通", guild_id="guild-1", channel_id="channel-1")
+
+    assert "禁言 用户ID 秒数：禁言频道成员" in out
+    assert "身份组列表：查看频道全部身份组" in out
+    assert "删帖 帖子ID：删除指定帖子" in out
+    assert ctx.errors == []
+
+
+def test_channel_management_dictionary_commands_cover_permissions_and_actions():
+    text = (Path(__file__).resolve().parent.parent / "dicts" / "频道管理.txt").read_text(encoding="utf-8")
+    eng = make_engine(text)
+    calls = []
+
+    async def api(method, path, payload):
+        calls.append((method, path, payload))
+        if path.endswith("/roles") and method == "GET":
+            return True, {"roles": [{"id": "role-1", "name": "管理员", "number": 2}]}
+        return True, {"ok": True}
+
+    base = {
+        "guild_id": "guild-1", "channel_id": "channel-1", "role": "owner",
+        "actions": {"官方API": api},
+    }
+
+    muted_out, muted_ctx = run(eng, "禁言 user-1 60", **base)
+    assert "已禁言 user-1（60 秒）" in muted_out
+    assert muted_ctx.errors == []
+
+    roles_out, roles_ctx = run(eng, "身份组列表", **base)
+    assert "管理员" in roles_out
+    assert roles_ctx.errors == []
+
+    posted_out, posted_ctx = run(eng, "发帖 标题 正文 内容", **base)
+    assert "已发帖「标题」" in posted_out
+    assert posted_ctx.errors == []
+
+    denied_out, denied_ctx = run(
+        eng, "拉黑 user-2", guild_id="guild-1", channel_id="channel-1", role="admin",
+        actions={"官方API": api},
+    )
+    assert "仅频道主可拉黑" in denied_out
+    assert denied_ctx.errors == []
+
+    assert calls == [
+        ("PATCH", "/guilds/guild-1/members/user-1/mute", {"mute_seconds": "60"}),
+        ("GET", "/guilds/guild-1/roles", None),
+        ("PUT", "/channels/channel-1/threads", {"title": "标题", "content": "正文 内容", "format": 1}),
+    ]
+
+
 # ---- _call_func 纯函数 ----
 
 async def call(func_str, **kw):

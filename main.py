@@ -191,7 +191,7 @@ def _event_ats(event) -> list:
 
 
 _URL_TOKEN_RE = re.compile(r"\s*<https?://[^>\s]+>")
-_MENTION_TOKEN_RE = re.compile(r"^<@([^>\s]+)>$")
+_MENTION_TOKEN_RE = re.compile(r"^<@!?([^>\s]+)>$")
 
 
 def _clean_message(event) -> str:
@@ -199,7 +199,7 @@ def _clean_message(event) -> str:
     content = event.content or ""
     for mention in event.mentions or []:
         if isinstance(mention, dict) and mention.get("is_you") and mention.get("id"):
-            content = re.sub(rf"\s*<@{re.escape(str(mention['id']))}>", "", content)
+            content = re.sub(rf"\s*<@!?{re.escape(str(mention['id']))}>", "", content)
     return _URL_TOKEN_RE.sub("", content).strip()
 
 
@@ -1207,6 +1207,7 @@ def _parse_buttons(spec: str, small: bool = False):
 async def send_outputs(event, outputs, md_mode, *, text_mode=False,
                        skip_suffix=False, auto_delete=0) -> None:
     """按片段顺序发送：文本合并成一条，媒体分条发送；按钮/引用附加到首条文本。"""
+    is_channel = bool(getattr(event, "guild_id", "") or getattr(event, "channel_id", ""))
     buttons = None
     small_rows = None
     quote_ref = ""
@@ -1223,6 +1224,9 @@ async def send_outputs(event, outputs, md_mode, *, text_mode=False,
             quote_ref = seg.get("content", "").strip() or getattr(event, "message_reference_id", "") or ""
     if small_rows:
         buttons = {"rows": (buttons or []) + small_rows, "font_size": "small"}
+    if is_channel:
+        # 频道原生 Markdown 依赖平台模板；词库面板退回普通文本。
+        buttons = None
     delete_after = auto_delete if auto_delete > 0 else None
     for seg in outputs:
         kind = seg["type"]
@@ -1237,7 +1241,9 @@ async def send_outputs(event, outputs, md_mode, *, text_mode=False,
                     kwargs["message_reference_id"] = quote_ref
                     quote_ref = ""
                 # QQ 开放平台要求键盘按钮必须挂在原生 Markdown 消息上
-                if md_mode or kwargs.get("buttons"):
+                if is_channel:
+                    msg_type = 0
+                elif md_mode or kwargs.get("buttons"):
                     msg_type = 2
                 elif text_mode:
                     msg_type = 0
