@@ -368,6 +368,13 @@ def test_channel_management_dictionary_commands_cover_permissions_and_actions():
     assert "已禁言 user-1（60 秒）" in muted_out
     assert muted_ctx.errors == []
 
+    mentioned_out, mentioned_ctx = run(
+        eng, "禁言 60", guild_id="guild-1", channel_id="channel-1", role="owner",
+        ats=["user-mentioned"], actions={"官方API": api},
+    )
+    assert "已禁言 user-mentioned（60 秒）" in mentioned_out
+    assert mentioned_ctx.errors == []
+
     roles_out, roles_ctx = run(eng, "身份组列表", **base)
     assert "管理员" in roles_out
     assert roles_ctx.errors == []
@@ -385,6 +392,7 @@ def test_channel_management_dictionary_commands_cover_permissions_and_actions():
 
     assert calls == [
         ("PATCH", "/guilds/guild-1/members/user-1/mute", {"mute_seconds": "60"}),
+        ("PATCH", "/guilds/guild-1/members/user-mentioned/mute", {"mute_seconds": "60"}),
         ("GET", "/guilds/guild-1/roles", None),
         ("PUT", "/channels/channel-1/threads", {"title": "标题", "content": "正文 内容", "format": 1}),
     ]

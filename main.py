@@ -184,8 +184,11 @@ def _event_images(event) -> list:
 
 def _event_ats(event) -> list:
     ids = []
-    for m in event.mentions or []:
-        if isinstance(m, dict) and m.get("id") and not m.get("is_you") and m.get("scope") != "all":
+    mentions = getattr(event, "mentions", None)
+    if not mentions:
+        mentions = (_event_d(event).get("mentions") or [])
+    for m in mentions:
+        if isinstance(m, dict) and m.get("id") and not m.get("is_you") and not m.get("bot") and m.get("scope") != "all":
             ids.append(str(m["id"]))
     return ids
 
