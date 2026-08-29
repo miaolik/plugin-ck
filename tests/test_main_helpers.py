@@ -271,6 +271,13 @@ def test_parse_buttons_types(main_mod):
     ]
 
 
+def test_parse_buttons_admin_only(main_mod):
+    rows = main_mod._parse_buttons("审核;通过入群 u1 r1;管理员")
+    assert rows == [[{
+        "text": "审核", "data": "通过入群 u1 r1", "type": 1, "admin": True,
+    }]]
+
+
 def test_redis_actions(main_mod, monkeypatch):
     import asyncio
 
