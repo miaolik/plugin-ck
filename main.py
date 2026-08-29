@@ -1410,6 +1410,9 @@ async def ck_interaction(event, match):
     bot_role = await _bot_role(event, cache_only=True) if hit else ""
     ctx = build_ctx(event, bot_role)
     ctx.message = data
+    # 管理按钮已由 QQ 平台按 action.permission 完成点击授权。交互事件通常不含
+    # 成员角色，向词库提供授权标记以避免缓存缺失时误拦截管理员回调。
+    ctx.extras["平台按钮授权"] = "1"
     if hit:
         await _fill_member_vars(event, ctx)
     matched = await engine.handle(ctx)

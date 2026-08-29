@@ -711,6 +711,23 @@ async def test_join_review_reject_callback_uses_default_reason():
     )
 
 
+@pytest.mark.asyncio
+async def test_join_review_platform_authorized_callback_skips_missing_role():
+    eng = make_join_review_engine()
+
+    async def list_requests(rest):
+        return '{"list":[]}'
+
+    ctx = Ctx(
+        message="入群申请列表",
+        actions={"入群申请列表": list_requests},
+        extras={"平台按钮授权": "1"},
+    )
+    assert await eng.handle(ctx) is True
+    text = "".join(output["content"] for output in ctx.outputs if output["type"] == "text")
+    assert text == "暂无待审核入群申请"
+
+
 async def test_call_func_recall_requires_support():
     with pytest.raises(CKError):
         await call("撤回")
