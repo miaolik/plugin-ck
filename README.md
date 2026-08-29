@@ -207,3 +207,13 @@ R:$访问 https://example.com/api$
 - 不支持 JS 脚本块（`#JAVASCRIPTSTART#` / `$执行JS$` / `$JS脚本$`）。画布函数通过 Renderer/Playwright 生成图片；群管函数由 QQ 开放平台接口和词库权限条件共同约束。
 - `$计算$` 为安全算术求值（非 JS）；`±at=±` 在 QQ 群开放平台下为文本假艾特。
 - 循环上限 1000 次，调用深度上限 10 层；HTTP 访问/下载超时默认 300 秒（5 分钟），可在 Web 端「设置」中自定义（1-3600 秒）。
+
+## Pull Request 提交流程
+
+创建或更新 Pull Request 前，先执行以下检查：
+
+- 使用 `gh pr view <number>` 确认相关历史 PR 的状态、目标分支和合并时间。
+- 使用 `git fetch origin main` 同步远程主分支，并通过 `git log --oneline origin/main..HEAD` 确认当前分支只包含待提交的变更。
+- 检查 `git status`、`git diff`、`git log --oneline -10`，确认提交范围和提交历史。
+- 历史 PR 已合并时，基于最新 `main` 创建新的 PR，避免继续复用已合并 PR。
+- 推送后使用 `gh pr view` 再次确认 PR 状态、目标分支、源分支和 URL。
