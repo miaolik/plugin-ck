@@ -278,6 +278,23 @@ def test_parse_buttons_admin_only(main_mod):
     }]]
 
 
+@pytest.mark.asyncio
+async def test_ack_interaction_prefers_raw_id_and_strips_prefix(main_mod):
+    requests = []
+
+    class Sender:
+        async def _request(self, method, path, **kwargs):
+            requests.append((method, path, kwargs))
+
+    event = FakeEvent(
+        message_id="INTERACTION_CREATE:fallback-id",
+        raw={"d": {"id": "INTERACTION_CREATE:official-id"}},
+        sender=Sender(),
+    )
+    assert await main_mod._ack_interaction(event) is True
+    assert requests == [("PUT", "/interactions/official-id", {"json": {"code": 0}})]
+
+
 def test_redis_actions(main_mod, monkeypatch):
     import asyncio
 
