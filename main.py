@@ -308,6 +308,20 @@ async def _audit_review_qa(items) -> list:
     return safe_items
 
 
+async def _safe_join_nickname(nickname: object) -> tuple[str, str]:
+    """审核入群申请昵称，返回可展示昵称及审核状态。"""
+    nickname = str(nickname or "").strip()
+    if not nickname:
+        return "", "无昵称"
+    try:
+        result = json.loads(await engine.censor_text(nickname))
+    except Exception:
+        result = {}
+    if result.get("conclusion") == "合规":
+        return nickname, "合规"
+    return _mask_text(nickname), "已隐藏"
+
+
 async def _safe_join_request(request: dict) -> dict:
     """仅保留审核所需字段，并审核后保留问答。"""
     if not isinstance(request, dict):
@@ -317,6 +331,11 @@ async def _safe_join_request(request: dict) -> dict:
         "apply_source", "invited_by", "verify_method",
     }
     out = {key: request[key] for key in allowed_fields if key in request}
+    raw_nickname = request.get("username") or request.get("nickname")
+    if raw_nickname:
+        nickname, nickname_audit = await _safe_join_nickname(raw_nickname)
+        out["username"] = nickname
+        out["nickname_audit"] = nickname_audit
     verify_info = request.get("verify_info") or {}
     qa = request.get("review_qa_list")
     if qa is None and isinstance(verify_info, dict):
@@ -1513,14 +1532,41 @@ async def ck_join_request(event, match):
     ctx.message = "入群申请"
     # 原始载荷含未审核问答，词库在此事件中只能访问已审核后的专用变量。
     ctx.raw_json = ""
-    safe_qa = await _audit_review_qa(getattr(event, "review_qa_list", []))
+    raw_event = _event_d(event)
+    applicant_id = str(event.user_id or raw_event.get("member_openid", "") or "")
+    applicant_name = str(
+        getattr(event, "username", "")
+        or (raw_event.get("author") or {}).get("username", "")
+        or raw_event.get("username", "")
+        or raw_event.get("nickname", "")
+    )
+    review_qa = getattr(event, "review_qa_list", None)
+    if review_qa is None:
+        review_qa = raw_event.get("review_qa_list") or (raw_event.get("verify_info") or {}).get("review_qa_list")
+    safe_qa = await _audit_review_qa(review_qa)
+    if not applicant_name:
+        try:
+            page = await event.sender.get_group_join_requests(event.group_id, limit=20)
+        except Exception:
+            page = None
+        for request in (page or {}).get("list", []):
+            if applicant_id and request.get("member_openid") == applicant_id:
+                applicant_name = str(request.get("username") or request.get("nickname") or "")
+                break
+    safe_name, name_audit = await _safe_join_nickname(applicant_name)
+    ctx.user_id = applicant_id or ctx.user_id
+    ctx.username = safe_name
+    applicant_display = f"{safe_name}（{ctx.user_id}）" if safe_name else ctx.user_id
     ctx.extras.update({
-        "入群申请ID": str(getattr(event, "join_request_id", "") or ""),
+        "入群申请ID": str(getattr(event, "join_request_id", "") or raw_event.get("join_request_id", "") or ""),
         "申请时间": str(getattr(event, "apply_at", "") or ""),
-        "申请来源": str(getattr(event, "apply_source", "") or ""),
+        "申请来源": str(getattr(event, "apply_source", "") or raw_event.get("apply_source", "") or ""),
         "邀请人": str(getattr(event, "invited_by", "") or ""),
         "审核方式": str(getattr(event, "verify_method", "") or ""),
         "入群问答": json.dumps(safe_qa, ensure_ascii=False),
+        "申请昵称": safe_name,
+        "申请昵称审核": name_audit,
+        "申请用户": applicant_display,
     })
     matched = await engine.handle(ctx)
     if not matched:
@@ -1529,7 +1575,18 @@ async def ck_join_request(event, match):
     text = "".join(o["content"] for o in ctx.outputs if o["type"] == "text").strip()
     if text:
         try:
-            await event.send_to_group(event.group_id, text)
+            button_rows = []
+            for output in ctx.outputs:
+                if output["type"] == "buttons":
+                    button_rows.extend(_parse_buttons(output["content"]))
+                elif output["type"] == "buttons_small":
+                    button_rows.extend(_parse_buttons(output["content"], small=True)["rows"])
+            if button_rows:
+                await event.sender.send_to_group(
+                    event.group_id, text, buttons=button_rows, msg_type=2,
+                )
+            else:
+                await event.send_to_group(event.group_id, text)
         except Exception as exc:
             report_error(PLUGIN, "词库", exc, context={
                 "phase": "入群申请事件输出", "group_id": event.group_id,

@@ -194,6 +194,84 @@ async def test_join_request_hides_raw_payload_from_json_variable(main_mod, monke
     assert 'raw=' in output and 'raw={"d"' not in output
 
 
+@pytest.mark.asyncio
+async def test_join_request_exposes_only_censored_applicant_nickname(main_mod, monkeypatch):
+    async def fake_censor(text):
+        conclusion = "合规" if text in ("申请昵称", "question", "answer") else "不合规"
+        return json.dumps({"success": True, "conclusion": conclusion})
+
+    class JoinEvent(FakeEvent):
+        def __init__(self):
+            super().__init__(
+                group_id="g1", user_id="u1", is_group=True,
+                raw={"d": {"author": {"username": "申请昵称"}}},
+            )
+            self.review_qa_list = [{"question": "question", "answer": "answer"}]
+            self.join_request_id = "request-1"
+            self.apply_at = self.apply_source = self.invited_by = self.verify_method = ""
+            self.sender = object()
+            self.sent = []
+
+        async def send_to_group(self, group_id, content):
+            self.sent.append((group_id, content))
+
+    event = JoinEvent()
+    monkeypatch.setattr(main_mod, "_get_bot", lambda appid: None)
+    monkeypatch.setattr(main_mod.engine, "censor_text", fake_censor)
+    monkeypatch.setattr(main_mod.engine, "find_block", lambda message: object() if message == "入群申请" else None)
+
+    async def handle(ctx):
+        ctx.out_text(f"{ctx.extras['申请昵称']}|{ctx.extras['申请昵称审核']}|{ctx.user_id}")
+        return True
+
+    monkeypatch.setattr(main_mod.engine, "handle", handle)
+    await main_mod.ck_join_request(event, None)
+    assert event.sent == [("g1", "申请昵称|合规|u1")]
+
+
+@pytest.mark.asyncio
+async def test_join_request_sends_markdown_buttons(main_mod, monkeypatch):
+    async def fake_censor(text):
+        return json.dumps({"success": True, "conclusion": "合规"})
+
+    class Sender:
+        def __init__(self):
+            self.sent = []
+
+        async def send_to_group(self, group_id, content, **kwargs):
+            self.sent.append((group_id, content, kwargs))
+
+    class JoinEvent(FakeEvent):
+        def __init__(self):
+            super().__init__(
+                group_id="g1", user_id="u1", is_group=True,
+                raw={"d": {"join_request_id": "r1", "apply_source": "self_apply"}},
+            )
+            self.review_qa_list = []
+            self.join_request_id = self.apply_at = self.apply_source = self.invited_by = self.verify_method = ""
+            self.sender = Sender()
+
+    event = JoinEvent()
+    monkeypatch.setattr(main_mod, "_get_bot", lambda appid: None)
+    monkeypatch.setattr(main_mod.engine, "censor_text", fake_censor)
+    monkeypatch.setattr(main_mod.engine, "find_block", lambda message: object() if message == "入群申请" else None)
+
+    async def handle(ctx):
+        assert ctx.extras["入群申请ID"] == "r1"
+        assert ctx.extras["申请来源"] == "self_apply"
+        assert ctx.extras["申请用户"] == "u1"
+        ctx.out_text("申请通知")
+        ctx.out("buttons", "通过;通过入群 u1 r1;管理员")
+        return True
+
+    monkeypatch.setattr(main_mod.engine, "handle", handle)
+    await main_mod.ck_join_request(event, None)
+    assert event.sender.sent == [("g1", "申请通知", {
+        "buttons": [[{"text": "通过", "data": "通过入群 u1 r1", "type": 1, "admin": True}]],
+        "msg_type": 2,
+    })]
+
+
 # ---- 成员缓存 ----
 
 @pytest.fixture
