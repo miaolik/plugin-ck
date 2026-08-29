@@ -1359,12 +1359,10 @@ async def _ack_interaction(event) -> bool:
     发送 code=0 的确认，否则客户端会一直处于 loading 状态直到超时。
     """
     try:
-        # 从事件对象获取 interaction_id
-        interaction_id = getattr(event, "message_id", "") or ""
-        if not interaction_id:
-            # 尝试从原始数据中获取
-            raw = getattr(event, "raw", None) or {}
-            interaction_id = (raw.get("d", {}) or {}).get("id", "") or ""
+        # 官方接口要求使用 INTERACTION_CREATE 的 d.id，且不带事件类型前缀。
+        raw = getattr(event, "raw", None) or {}
+        interaction_id = (raw.get("d", {}) or {}).get("id", "") or getattr(event, "message_id", "") or ""
+        interaction_id = str(interaction_id).removeprefix("INTERACTION_CREATE:")
         if not interaction_id:
             return False
 
@@ -1410,6 +1408,9 @@ async def ck_interaction(event, match):
     bot_role = await _bot_role(event, cache_only=True) if hit else ""
     ctx = build_ctx(event, bot_role)
     ctx.message = data
+    # 管理按钮已由 QQ 平台按 action.permission 完成点击授权。交互事件通常不含
+    # 成员角色，向词库提供授权标记以避免缓存缺失时误拦截管理员回调。
+    ctx.extras["平台按钮授权"] = "1"
     if hit:
         await _fill_member_vars(event, ctx)
     matched = await engine.handle(ctx)
