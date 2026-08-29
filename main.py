@@ -444,6 +444,23 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         ok, response = await event.sender.set_group_member_mute(event.group_id, members)
         return json.dumps({"success": ok, "data": response}, ensure_ascii=False)
 
+    async def channel_non_at(rest):
+        if not event.guild_id:
+            raise CKError("$频道免艾特$ 仅频道场景可用")
+        value = rest.strip()
+        if value not in ("0", "1"):
+            raise CKError("$频道免艾特$ 格式：$频道免艾特 1$ 或 $频道免艾特 0$")
+        from core.base.config import cfg
+        if not cfg.set_bot_setting(event.appid, "websocket.subscribe_channel_events", value == "1"):
+            raise CKError("$频道免艾特$ 更新机器人配置失败")
+        return value
+
+    async def channel_non_at_status(rest):
+        if not event.guild_id:
+            raise CKError("$频道免艾特状态$ 仅频道场景可用")
+        from core.base.config import cfg
+        return "开" if cfg.get_bot_setting(event.appid, "websocket.subscribe_channel_events", False) else "关"
+
     async def join_requests(rest):
         if not event.group_id:
             raise CKError("$入群申请列表$ 仅群聊场景可用")
@@ -495,6 +512,8 @@ def build_ctx(event, bot_role: str = "") -> Ctx:
         "群禁言状态": group_mute_status,
         "群禁言": group_mute,
         "解除群禁言": unmute_group,
+        "频道免艾特": channel_non_at,
+        "频道免艾特状态": channel_non_at_status,
         "入群申请列表": join_requests,
         "入群审核": review_join_request,
         "群资料刷新": refresh_group,
@@ -1181,6 +1200,7 @@ def _parse_buttons(spec: str, small: bool = False):
 
     值为 URL → 链接按钮；以 / 开头 → 填充输入框(type=2)；以 > 开头 → 普通指令按钮
     (type=2+enter，点击后以用户身份直接发送该指令)；其余 → 回调(type=1)。省略值时用文本。
+    在值后追加 ;管理员 可限制按钮仅群主/管理员点击。
     small=True 时返回小字号键盘（font_size=small）。"""
     rows = []
     for row in spec.split("^"):
@@ -1191,15 +1211,22 @@ def _parse_buttons(spec: str, small: bool = False):
                 continue
             text, _, value = item.partition(";")
             text, value = text.strip(), (value or text).strip()
+            admin_only = value.endswith(";管理员")
+            if admin_only:
+                value = value[:-4].rstrip()
+            button = {"text": text}
             if is_http_url(value):
-                btns.append({"text": text, "link": value})
+                button["link"] = value
             elif value.startswith("/"):
-                btns.append({"text": text, "data": value, "type": 2})
+                button.update({"data": value, "type": 2})
             elif value.startswith(">"):
                 data = value[1:].strip() or text
-                btns.append({"text": text, "data": data, "type": 2, "enter": True})
+                button.update({"data": data, "type": 2, "enter": True})
             else:
-                btns.append({"text": text, "data": value, "type": 1})
+                button.update({"data": value, "type": 1})
+            if admin_only:
+                button["admin"] = True
+            btns.append(button)
         if btns:
             rows.append(btns)
     if not rows:

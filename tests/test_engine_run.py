@@ -27,6 +27,11 @@ def make_farm_engine():
     return make_engine(text)
 
 
+def make_join_review_engine():
+    text = (Path(__file__).resolve().parent.parent / "dicts" / "入群审核.txt").read_text(encoding="utf-8")
+    return make_engine(text)
+
+
 # ---- find_block / _skip_to ----
 
 def test_find_block_matches_and_respects_internal():
@@ -348,6 +353,31 @@ def test_channel_management_text_menu_lists_one_command_per_line():
     assert ctx.errors == []
 
 
+def test_channel_non_at_dictionary_requires_owner_and_updates_setting():
+    text = (Path(__file__).resolve().parent.parent / "dicts" / "频道管理.txt").read_text(encoding="utf-8")
+    eng = make_engine(text)
+    calls = []
+
+    async def set_non_at(value):
+        calls.append(value)
+        return value
+
+    denied_out, denied_ctx = run(
+        eng, "频道免艾特开启", guild_id="guild-1", channel_id="channel-1", role="admin",
+        actions={"频道免艾特": set_non_at},
+    )
+    assert "仅频道主可修改" in denied_out
+    assert denied_ctx.errors == []
+
+    enabled_out, enabled_ctx = run(
+        eng, "频道免艾特开启", guild_id="guild-1", channel_id="channel-1", role="owner",
+        actions={"频道免艾特": set_non_at},
+    )
+    assert calls == ["1"]
+    assert "已开启频道免艾特回复" in enabled_out
+    assert enabled_ctx.errors == []
+
+
 def test_channel_management_dictionary_commands_cover_permissions_and_actions():
     text = (Path(__file__).resolve().parent.parent / "dicts" / "频道管理.txt").read_text(encoding="utf-8")
     eng = make_engine(text)
@@ -640,6 +670,45 @@ def test_md_combined_formats_single_message():
         "> 引用 **加粗**"
     )
     assert [o["type"] for o in ctx.outputs] == ["text", "buttons"]
+
+
+@pytest.mark.asyncio
+async def test_join_review_list_emits_admin_only_callbacks():
+    eng = make_join_review_engine()
+
+    async def list_requests(rest):
+        assert rest == ""
+        return '{"list":[{"member_openid":"u1","join_request_id":"r1","review_qa_list":[]}]}'
+
+    ctx = Ctx(
+        message="入群申请列表",
+        role="admin",
+        actions={"入群申请列表": list_requests},
+    )
+    assert await eng.handle(ctx) is True
+    buttons = [output["content"] for output in ctx.outputs if output["type"] == "buttons"]
+    assert buttons == ["✅ 通过;通过入群 u1 r1;管理员|⛔ 拒绝;拒绝入群 u1 r1;管理员"]
+
+
+@pytest.mark.asyncio
+async def test_join_review_reject_callback_uses_default_reason():
+    eng = make_join_review_engine()
+    calls = []
+
+    async def review(rest):
+        calls.append(rest)
+        return '{"success":true}'
+
+    ctx = Ctx(
+        message="拒绝入群 u1 r1",
+        role="owner",
+        actions={"入群审核": review},
+    )
+    assert await eng.handle(ctx) is True
+    assert calls == ["u1 decline r1 管理员拒绝"]
+    assert "已拒绝 u1 的入群申请" in "".join(
+        output["content"] for output in ctx.outputs if output["type"] == "text"
+    )
 
 
 async def test_call_func_recall_requires_support():
