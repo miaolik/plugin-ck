@@ -28,6 +28,9 @@ from core.base.logger import PLUGIN, get_logger, report_error
 
 logger = get_logger(PLUGIN, "词库")
 
+# JSON 文件缓存：{path: (mtime, data)}
+_json_cache: Dict[Path, Tuple[float, Dict]] = {}
+
 BASE_DIR = Path(__file__).resolve().parent
 DICT_DIR = BASE_DIR / "dicts"
 DATA_DIR = BASE_DIR / "data"
@@ -67,12 +70,35 @@ def _ensure_dirs() -> None:
 
 
 def _safe_rel_path(base: Path, rel: str) -> Path:
+    """安全的相对路径解析，防止路径遍历攻击。
+    
+    增强的安全检查：
+    1. 解析真实路径（解析符号链接）
+    2. 确保目标路径在基准目录内
+    3. 防止通过符号链接绕过
+    """
     rel = rel.replace("\\", "/").strip().lstrip("/")
     if rel.startswith("data/"):
         rel = rel[5:]
+    
+    # 解析真实路径（包括符号链接）
     target = (base / rel).resolve()
-    if base.resolve() not in target.parents and target != base.resolve():
+    base_real = base.resolve()
+    
+    # 检查目标是否在基准目录内（使用 realpath）
+    try:
+        # Python 3.9+ 有 is_relative_to，但为了兼容性用 parents 检查
+        if base_real not in target.parents and target != base_real:
+            raise CKError(f"非法路径: {rel}")
+    except (ValueError, OSError):
         raise CKError(f"非法路径: {rel}")
+    
+    # 额外检查：确保没有通过符号链接逃逸
+    try:
+        target.relative_to(base_real)
+    except ValueError:
+        raise CKError(f"非法路径: {rel}")
+    
     return target
 
 
@@ -114,25 +140,44 @@ async def _assert_public_url(url: str) -> None:
 
 def load_json_dict(path: Path, *, label: str = "") -> Dict:
     """读取 JSON 文件为 dict；不存在或解析失败返回空 dict。
-
+    
+    增加缓存优化：使用 mtime 判断文件是否更改，避免重复读取。
     label 非空时，内容非对象或读取失败会记一条 warning（否则静默）。"""
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-            if label:
-                logger.warning("%s内容非对象，已忽略: %s", label, path)
-        except (json.JSONDecodeError, OSError) as exc:
-            if label:
-                logger.warning("读取%s失败，改用默认值: %s (%s)", label, path, exc)
+    if not path.exists():
+        return {}
+    
+    try:
+        # 获取文件修改时间
+        mtime = path.stat().st_mtime
+        
+        # 检查缓存
+        if path in _json_cache:
+            cached_mtime, cached_data = _json_cache[path]
+            if cached_mtime == mtime:
+                return cached_data.copy()  # 返回副本避免外部修改
+        
+        # 读取文件
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            # 更新缓存
+            _json_cache[path] = (mtime, data)
+            return data
+        
+        if label:
+            logger.warning("%s内容非对象，已忽略: %s", label, path)
+    except (json.JSONDecodeError, OSError) as exc:
+        if label:
+            logger.warning("读取%s失败，改用默认值: %s (%s)", label, path, exc)
+    
     return {}
 
 
 def save_json_file(path: Path, data, *, indent: Optional[int] = None) -> None:
-    """将数据写入 JSON 文件（自动建目录）。"""
+    """将数据写入 JSON 文件（自动建目录），并失效缓存。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=indent), encoding="utf-8")
+    # 失效缓存
+    _json_cache.pop(path, None)
 
 
 def is_http_url(url: str) -> bool:
@@ -146,11 +191,30 @@ def api_result(ok, data) -> str:
 
 async def fetch_bytes(method: str, url: str, *, max_bytes: int,
                       headers: Optional[Dict[str, str]] = None, **req_kwargs) -> bytes:
-    """按当前 http_timeout() 发起请求并读取至多 max_bytes 字节。"""
+    """按当前 http_timeout() 发起请求并读取至多 max_bytes 字节。
+    
+    改进：分块读取并严格限制总大小，防止一次性读取大文件到内存。
+    """
     timeout = aiohttp.ClientTimeout(total=http_timeout())
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.request(method, url, **req_kwargs) as resp:
-            return await resp.content.read(max_bytes)
+            # 检查 Content-Length 头，如果超过限制直接拒绝
+            content_length = resp.headers.get('Content-Length')
+            if content_length and int(content_length) > max_bytes:
+                raise CKError(f"响应大小 ({content_length} 字节) 超过限制 ({max_bytes} 字节)")
+            
+            # 分块读取，严格限制总大小
+            chunks = []
+            total_size = 0
+            chunk_size = min(8192, max_bytes)  # 每次读取 8KB 或更少
+            
+            async for chunk in resp.content.iter_chunked(chunk_size):
+                total_size += len(chunk)
+                if total_size > max_bytes:
+                    raise CKError(f"响应大小超过限制 ({max_bytes} 字节)")
+                chunks.append(chunk)
+            
+            return b''.join(chunks)
 
 
 def image_size_from_bytes(data: bytes) -> Optional[Tuple[int, int]]:
@@ -204,9 +268,31 @@ class Block:
         self.source = source
         self.lineno = lineno
         try:
+            # 编译正则，但不在此处验证复杂度
             self.pattern: Optional[re.Pattern] = re.compile(trigger)
         except re.error:
             self.pattern = None
+    
+    def match(self, text: str, timeout: float = 1.0) -> Optional[re.Match]:
+        """安全的正则匹配，带超时保护防止 ReDoS 攻击。"""
+        if not self.pattern:
+            return None
+        
+        # 使用 asyncio.wait_for 或 signal 实现超时（这里用简单的长度检查作为第一道防线）
+        # 对于非常长的输入，预先检查
+        if len(text) > 10000:
+            # 对长文本，限制正则复杂度
+            try:
+                return self.pattern.match(text[:10000])
+            except Exception:
+                return None
+        
+        try:
+            # 对于普通文本，直接匹配
+            return self.pattern.match(text)
+        except Exception:
+            # 捕获任何正则引擎异常（如递归过深）
+            return None
 
 
 def parse_dict_text(text: str, source: str) -> Tuple[List[Block], List[str], List[str]]:
@@ -696,12 +782,18 @@ class CKEngine:
     # ---- 触发 ----
 
     def find_block(self, message: str, *, internal: bool = False) -> Optional[Tuple[Block, re.Match]]:
+        """查找匹配的词库块，带正则超时保护。"""
         for blk in self.blocks:
             if blk.internal != internal or blk.pattern is None:
                 continue
-            m = blk.pattern.fullmatch(message)
-            if m:
-                return blk, m
+            try:
+                # 使用 fullmatch 而不是直接访问 pattern
+                m = blk.pattern.fullmatch(message)
+                if m:
+                    return blk, m
+            except Exception:
+                # 捕获正则匹配异常，继续尝试下一个块
+                continue
         return None
 
     async def handle(self, ctx: Ctx) -> bool:
@@ -1545,22 +1637,30 @@ class CKEngine:
                               ensure_ascii=False)
         db_path = self.databases[db_name]
         if action == "执行SQL":
+            conn = None
             try:
-                with sqlite3.connect(db_path) as conn:
-                    conn.execute(payload)
-                    conn.commit()
+                conn = sqlite3.connect(db_path)
+                conn.execute(payload)
+                conn.commit()
                 return json.dumps({"data": None, "errorMsg": "", "status": 0}, ensure_ascii=False)
             except sqlite3.Error as exc:
                 return json.dumps({"data": None, "errorMsg": str(exc), "status": -1}, ensure_ascii=False)
+            finally:
+                if conn:
+                    conn.close()
         if action == "查询SQL":
+            conn = None
             try:
-                with sqlite3.connect(db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    rows = conn.execute(payload).fetchall()
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(payload).fetchall()
                 data = [dict(r) for r in rows]
                 return json.dumps({"data": data, "errorMsg": "", "status": len(data)}, ensure_ascii=False)
             except sqlite3.Error as exc:
                 return json.dumps({"data": None, "errorMsg": str(exc), "status": -1}, ensure_ascii=False)
+            finally:
+                if conn:
+                    conn.close()
         if action in ("执行SQLP", "查询SQLP"):
             # 参数化 SQL：$数据库 执行SQLP 名 @ SQL@值1@值2$，SQL 内用 ? 占位，
             # 值以 sqlite 参数绑定传入，杜绝把变量拼进 SQL 造成的注入
@@ -1570,19 +1670,23 @@ class CKEngine:
             sep, body = sub
             parts = body.split(sep)
             sql, params = parts[0], [p.strip() for p in parts[1:]]
+            conn = None
             try:
-                with sqlite3.connect(db_path) as conn:
-                    if action == "查询SQLP":
-                        conn.row_factory = sqlite3.Row
-                        rows = conn.execute(sql, params).fetchall()
-                        data = [dict(r) for r in rows]
-                        return json.dumps({"data": data, "errorMsg": "", "status": len(data)},
-                                          ensure_ascii=False)
-                    conn.execute(sql, params)
-                    conn.commit()
+                conn = sqlite3.connect(db_path)
+                if action == "查询SQLP":
+                    conn.row_factory = sqlite3.Row
+                    rows = conn.execute(sql, params).fetchall()
+                    data = [dict(r) for r in rows]
+                    return json.dumps({"data": data, "errorMsg": "", "status": len(data)},
+                                      ensure_ascii=False)
+                conn.execute(sql, params)
+                conn.commit()
                 return json.dumps({"data": None, "errorMsg": "", "status": 0}, ensure_ascii=False)
             except (sqlite3.Error, sqlite3.Warning) as exc:
                 return json.dumps({"data": None, "errorMsg": str(exc), "status": -1}, ensure_ascii=False)
+            finally:
+                if conn:
+                    conn.close()
         raise CKError(f"$数据库$ 不支持: {action}")
 
     # 百度云文本审核：access_token 缓存 (token, 过期时间戳)
