@@ -13,7 +13,10 @@ import time
 from datetime import datetime
 from typing import Callable, Dict, Optional
 
+from core.base.logger import PLUGIN, get_logger
 from .ck_engine import DATA_DIR, CKError, load_json_dict, save_json_file
+
+logger = get_logger(PLUGIN, "词库定时任务")
 
 CRON_FILE = DATA_DIR / "定时任务.json"
 MAX_TASKS = 100
@@ -145,12 +148,41 @@ class CronManager:
             self._loop_task = None
 
     async def _loop(self) -> None:
+        """定时任务主循环，增强时间异常处理。"""
+        max_loop_iterations = 10000  # 防止无限循环的安全阈值
+        iteration_count = 0
+        
         while True:
-            await asyncio.sleep(60 - time.time() % 60)  # 对齐分钟边界
+            iteration_count += 1
+            if iteration_count > max_loop_iterations:
+                logger.error("定时任务循环超过安全阈值，重置计数器")
+                iteration_count = 0
+                await asyncio.sleep(60)  # 强制等待一分钟
+            
+            # 使用 monotonic 时间对齐，防止系统时间调整导致异常
+            sleep_time = 60 - time.time() % 60
+            if sleep_time < 0 or sleep_time > 60:
+                # 时间异常，使用保守的等待时间
+                sleep_time = 60
+            await asyncio.sleep(sleep_time)
+            
             now = datetime.now()
             stamp = now.strftime("%Y%m%d%H%M")
+            
+            # 防止时间倒退导致重复执行
             if stamp == self._last_minute:
                 continue
+            
+            # 检测时间跳跃（前进或后退超过 10 分钟）
+            if self._last_minute:
+                try:
+                    last_dt = datetime.strptime(self._last_minute, "%Y%m%d%H%M")
+                    time_diff = (now - last_dt).total_seconds()
+                    if abs(time_diff) > 600:  # 超过 10 分钟
+                        logger.warning(f"检测到系统时间跳跃: {time_diff:.0f}秒")
+                except ValueError:
+                    pass
+            
             self._last_minute = stamp
             for name, task in list(self.tasks.items()):
                 if not task.get("enabled", True):

@@ -8,6 +8,8 @@ import sys
 import time
 import json
 import re
+import asyncio
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -65,6 +67,7 @@ _members_cache: dict = {}  # group_id -> {user_id: {username, member_role, first
 _members_dirty = False
 _members_last_save = 0.0
 _MEMBERS_SAVE_INTERVAL = 30
+_members_lock = asyncio.Lock()  # 保护成员缓存的并发写入
 
 
 def _members_load() -> None:
@@ -85,30 +88,31 @@ def _members_save(force: bool = False) -> None:
         logger.warning("写入成员缓存文件失败，成员信息未持久化: %s (%s)", _MEMBERS_FILE, exc)
 
 
-def _members_record(event) -> None:
+async def _members_record(event) -> None:
     """从群消息体 author 里记录发言人的昵称/身份；同时持久化机器人身份。"""
     global _members_dirty
-    gid = event.group_id or ""
-    if not gid:
-        return
-    author = _event_d(event).get("author") or {}
-    uid = event.user_id or ""
-    if uid and isinstance(author, dict) and (author.get("username") or author.get("member_role")):
-        grp = _members_cache.setdefault(gid, {})
-        rec = grp.setdefault(uid, {"first_seen": int(time.time())})
-        if author.get("username"):
-            rec["username"] = author["username"]
-        if author.get("member_role"):
-            rec["member_role"] = author["member_role"]
-        rec["last_seen"] = int(time.time())
-        _members_dirty = True
-    bot_role = getattr(event, "bot_member_role", "") or ""
-    if bot_role:
-        grp = _members_cache.setdefault(gid, {})
-        if grp.get("__bot__", {}).get("member_role") != bot_role:
-            grp["__bot__"] = {"member_role": bot_role, "last_seen": int(time.time())}
+    async with _members_lock:
+        gid = event.group_id or ""
+        if not gid:
+            return
+        author = _event_d(event).get("author") or {}
+        uid = event.user_id or ""
+        if uid and isinstance(author, dict) and (author.get("username") or author.get("member_role")):
+            grp = _members_cache.setdefault(gid, {})
+            rec = grp.setdefault(uid, {"first_seen": int(time.time())})
+            if author.get("username"):
+                rec["username"] = author["username"]
+            if author.get("member_role"):
+                rec["member_role"] = author["member_role"]
+            rec["last_seen"] = int(time.time())
             _members_dirty = True
-    _members_save()
+        bot_role = getattr(event, "bot_member_role", "") or ""
+        if bot_role:
+            grp = _members_cache.setdefault(gid, {})
+            if grp.get("__bot__", {}).get("member_role") != bot_role:
+                grp["__bot__"] = {"member_role": bot_role, "last_seen": int(time.time())}
+                _members_dirty = True
+        await asyncio.to_thread(_members_save)
 
 
 def _members_get(gid: str, uid: str):
@@ -1348,7 +1352,7 @@ async def _send_ark(event, spec: str) -> None:
                       "DIRECT_MESSAGE_CREATE", "MESSAGE_CREATE"], ignore_at_check=True)
 async def ck_dispatch(event, match):
     if getattr(event, "is_group", False):
-        _members_record(event)
+        await _members_record(event)
     message = _clean_message(event)
     logger.debug("词库收到消息 (type=%s, group=%s, at_self=%s, mentions=%d)",
                 getattr(event, "event_type", ""), getattr(event, "group_id", ""),
@@ -1368,7 +1372,9 @@ async def ck_dispatch(event, match):
 
 
 _BTN_DEBOUNCE_SECONDS = 2.0
-_btn_last_click: dict = {}
+_BTN_CACHE_MAX_SIZE = 10000
+_btn_last_click: OrderedDict = OrderedDict()  # LRU cache for button click debounce
+_btn_cache_lock = asyncio.Lock()  # 保护按钮缓存的并发访问
 
 
 async def _ack_interaction(event) -> bool:
@@ -1414,12 +1420,17 @@ async def ck_interaction(event, match):
         return
     key = (event.user_id or "", data)
     now = time.monotonic()
-    last = _btn_last_click.get(key, 0.0)
-    if now - last < _BTN_DEBOUNCE_SECONDS:
-        return
-    _btn_last_click[key] = now
-    if len(_btn_last_click) > 10000:
-        _btn_last_click.clear()
+    
+    # 使用 LRU 缓存，避免内存无限增长
+    async with _btn_cache_lock:
+        last = _btn_last_click.get(key, 0.0)
+        if now - last < _BTN_DEBOUNCE_SECONDS:
+            return
+        _btn_last_click[key] = now
+        _btn_last_click.move_to_end(key)  # 标记为最近使用
+        # 当缓存超过上限时，移除最老的条目（而不是清空全部）
+        if len(_btn_last_click) > _BTN_CACHE_MAX_SIZE:
+            _btn_last_click.popitem(last=False)  # 移除最老的条目
 
     # 回调事件不带 author/mentions, 昵称身份与机器人身份只读本地缓存
     # (不打成员接口, 避免阻塞导致回调响应超时)
